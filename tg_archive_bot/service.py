@@ -180,6 +180,8 @@ class ArchiveBot:
         origin = getattr(update.message, "forward_origin", None)
         if not origin or not hasattr(origin, "chat") or not hasattr(origin, "message_id"):
             return False
+        if origin.chat is None or origin.message_id is None:
+            return False
         forward_chat_id = origin.chat.id
         our_channel_id = self.config.publish_channel_id
         if our_channel_id.startswith("@"):
