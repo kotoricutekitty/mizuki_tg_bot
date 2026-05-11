@@ -84,6 +84,8 @@ def setup_logging() -> None:
             logging.StreamHandler(),
         ],
     )
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 
 async def error_handler(update: object, context: Any) -> None:
