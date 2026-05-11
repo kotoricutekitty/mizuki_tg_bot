@@ -41,4 +41,4 @@ def test_publish_caption_preserved():
         author_name="作者",
         text="hello\nworld",
         canonical_url="https://x.com/a/status/1",
-    ) == "作者「hello world」\nhttps://x.com/a/status/1"
+    ) == "<b>作者</b>: 「hello world」\nhttps://x.com/a/status/1"

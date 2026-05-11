@@ -2,6 +2,8 @@ from __future__ import annotations
 
 """User-visible text preserved from the original bot."""
 
+from html import escape
+
 START_TEXT = (
     "欢迎使用 mizuki bot 喵～！\n\n"
     "把想归档的链接直接丢给我就好喵！\n"
@@ -118,16 +120,16 @@ def publish_caption(
     content_part = ""
     if text:
         cleaned_text = text.replace("\n", " ").replace("\r", "").strip()
-        content_part = f"「{cleaned_text}」"
+        content_part = f"「{escape(cleaned_text)}」"
     if author_name:
-        caption += f"{author_name}{content_part}"
+        caption += f"<b>{escape(author_name)}</b>: {content_part}"
     else:
         caption += content_part
     caption += "\n"
     if canonical_url:
-        caption += f"{canonical_url}"
+        caption += f"{escape(canonical_url)}"
     else:
-        caption += f"{url}"
+        caption += f"{escape(url)}"
     return caption
 
 

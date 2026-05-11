@@ -51,7 +51,8 @@ async def test_admin_submit_auto_publish(app_factory, sample_media):
     assert message.replies[-1]["text"] == messages.admin_published("https://twitter.com/user/status/123")
     assert bot.calls[0]["method"] == "send_photo"
     assert bot.calls[0]["chat_id"] == "@archive"
-    assert bot.calls[0]["caption"] == "artist「hello」\nhttps://x.com/user/status/123"
+    assert bot.calls[0]["caption"] == "<b>artist</b>: 「hello」\nhttps://x.com/user/status/123"
+    assert bot.calls[0]["parse_mode"] == "HTML"
 
 
 @pytest.mark.asyncio

@@ -247,12 +247,17 @@ class ArchiveBot:
             return None
         if len(media_files) <= 10:
             if len(media_files) == 1:
-                sent = await self._send_single_media(self.config.publish_channel_id, media_files[0], caption)
+                sent = await self._send_single_media(
+                    self.config.publish_channel_id,
+                    media_files[0],
+                    caption,
+                    parse_mode="HTML",
+                )
                 channel_message_id = getattr(sent, "message_id", None)
             else:
                 sent_media = await self.bot.send_media_group(
                     chat_id=self.config.publish_channel_id,
-                    media=build_media_group(media_files[:10], caption),
+                    media=build_media_group(media_files[:10], caption, parse_mode="HTML"),
                 )
                 if sent_media:
                     channel_message_id = getattr(sent_media[0], "message_id", None)
@@ -262,6 +267,7 @@ class ArchiveBot:
                 chat_id=self.config.publish_channel_id,
                 photo=media_files[0],
                 caption=f"{caption}\n\n📸 共 {len(media_files)} 张图",
+                parse_mode="HTML",
                 reply_markup=reply_markup,
             )
             channel_message_id = getattr(sent, "message_id", None)
@@ -281,12 +287,21 @@ class ArchiveBot:
         logging.info("发布成功: 投稿 #%s 已发送到频道 %s", submission_id, self.config.publish_channel_id)
         return channel_message_id
 
-    async def _send_single_media(self, chat_id: int | str, file_path: str, caption: str, reply_markup: Any | None = None) -> Any:
+    async def _send_single_media(
+        self,
+        chat_id: int | str,
+        file_path: str,
+        caption: str,
+        reply_markup: Any | None = None,
+        parse_mode: str | None = None,
+    ) -> Any:
         kind = media_kind(file_path)
         file_size = Path(file_path).stat().st_size if Path(file_path).exists() else 0
         kwargs = {"caption": caption}
         if reply_markup is not None:
             kwargs["reply_markup"] = reply_markup
+        if parse_mode is not None:
+            kwargs["parse_mode"] = parse_mode
         if kind == "photo":
             if file_size <= MAX_PHOTO_SIZE:
                 return await self.bot.send_photo(chat_id=chat_id, photo=file_path, **kwargs)
@@ -417,11 +432,14 @@ def collect_message_text(message: Any) -> str:
     return text
 
 
-def build_media_group(media_files: list[str], caption: str) -> list[dict[str, Any]]:
+def build_media_group(media_files: list[str], caption: str, parse_mode: str | None = None) -> list[dict[str, Any]]:
     media: list[dict[str, Any]] = []
     for i, file_path in enumerate(media_files):
         kind = media_kind(file_path)
-        media.append({"type": kind, "media": file_path, "caption": caption if i == 0 else ""})
+        item: dict[str, Any] = {"type": kind, "media": file_path, "caption": caption if i == 0 else ""}
+        if i == 0 and parse_mode is not None:
+            item["parse_mode"] = parse_mode
+        media.append(item)
     return media
 
 

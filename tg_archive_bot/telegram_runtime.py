@@ -41,6 +41,8 @@ class TelegramBotClient:
                 fh = open_if_path(item["media"])
                 opened.append(fh)
                 kwargs = {"caption": item.get("caption") or None}
+                if item.get("parse_mode"):
+                    kwargs["parse_mode"] = item["parse_mode"]
                 if item["type"] == "photo":
                     tg_media.append(InputMediaPhoto(fh, **kwargs))
                 elif item["type"] == "video":
