@@ -18,7 +18,6 @@ class BotConfig:
     http_api_enabled: bool = False
     http_api_host: str = "0.0.0.0"
     http_api_port: int = 8080
-    force_png: bool = False
     pixiv_limit_count: int = 100
     pixiv_limit_hours: int = 5
 
@@ -41,7 +40,6 @@ class BotConfig:
             http_api_enabled=parse_bool(os.getenv("HTTP_API_ENABLED", "false")),
             http_api_host=os.getenv("HTTP_API_HOST", "0.0.0.0"),
             http_api_port=int(os.getenv("HTTP_API_PORT", "8080")),
-            force_png=parse_bool(os.getenv("FORCE_PNG", "false")),
         )
 
     def validate_runtime(self) -> None:

@@ -36,7 +36,6 @@ Optional:
 | `DATABASE_PATH` | SQLite database path |
 | `MEDIA_DIR` | Local media archive path |
 | `TEMP_DIR` | Temporary working directory |
-| `FORCE_PNG` | Reserved media behavior flag |
 
 ## Behavior Notes
 
