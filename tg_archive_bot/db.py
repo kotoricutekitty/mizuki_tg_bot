@@ -48,6 +48,7 @@ class Database:
         with self.connect() as conn:
             conn.executescript(SCHEMA)
             self._migrate_legacy(conn)
+            conn.executescript(INDEXES)
 
     def _migrate_legacy(self, conn: sqlite3.Connection) -> None:
         existing = {row["name"] for row in conn.execute("PRAGMA table_info(submissions)")}
@@ -239,6 +240,9 @@ CREATE TABLE IF NOT EXISTS pixiv_downloads (
   url TEXT
 );
 
+"""
+
+INDEXES = """
 CREATE INDEX IF NOT EXISTS idx_submissions_status ON submissions(status);
 CREATE INDEX IF NOT EXISTS idx_submissions_message_id ON submissions(message_id);
 CREATE INDEX IF NOT EXISTS idx_submissions_normalized_url ON submissions(normalized_url);
