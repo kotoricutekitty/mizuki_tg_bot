@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tg-archive-bot"
+version = "0.1.0"
+description = "Python-only Telegram content archive bot"
+requires-python = ">=3.11"
+dependencies = [
+  "python-dotenv>=1.0",
+  "python-telegram-bot>=20,<22",
+  "aiohttp>=3.9",
+  "Pillow>=10",
+  "beautifulsoup4>=4.12",
+]
+
+[project.optional-dependencies]
+test = [
+  "pytest>=8",
+  "pytest-asyncio>=0.23",
+]
+
+[project.scripts]
+tg-archive-bot = "tg_archive_bot.cli:run"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"

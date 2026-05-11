@@ -1,0 +1,137 @@
+from __future__ import annotations
+
+import asyncio
+import logging
+from logging.handlers import RotatingFileHandler
+from pathlib import Path
+from typing import Any
+
+from dotenv import load_dotenv
+
+from .config import BotConfig
+from .db import Database
+from .downloader import GalleryDownloader
+from .http_api import run_http_api
+from .service import ArchiveBot
+
+
+class TelegramBotClient:
+    def __init__(self, bot: Any):
+        self.bot = bot
+
+    async def send_message(self, chat_id: int | str, text: str, **kwargs: Any) -> Any:
+        return await self.bot.send_message(chat_id=chat_id, text=text, **convert_reply_markup(kwargs))
+
+    async def send_photo(self, chat_id: int | str, photo: Any, **kwargs: Any) -> Any:
+        return await self.bot.send_photo(chat_id=chat_id, photo=open_if_path(photo), **convert_reply_markup(kwargs))
+
+    async def send_video(self, chat_id: int | str, video: Any, **kwargs: Any) -> Any:
+        return await self.bot.send_video(chat_id=chat_id, video=open_if_path(video), **convert_reply_markup(kwargs))
+
+    async def send_document(self, chat_id: int | str, document: Any, **kwargs: Any) -> Any:
+        return await self.bot.send_document(chat_id=chat_id, document=open_if_path(document), **convert_reply_markup(kwargs))
+
+    async def send_media_group(self, chat_id: int | str, media: list[dict[str, Any]]) -> Any:
+        from telegram import InputMediaDocument, InputMediaPhoto, InputMediaVideo
+
+        opened = []
+        tg_media = []
+        try:
+            for item in media:
+                fh = open_if_path(item["media"])
+                opened.append(fh)
+                kwargs = {"caption": item.get("caption") or None}
+                if item["type"] == "photo":
+                    tg_media.append(InputMediaPhoto(fh, **kwargs))
+                elif item["type"] == "video":
+                    tg_media.append(InputMediaVideo(fh, **kwargs))
+                else:
+                    tg_media.append(InputMediaDocument(fh, **kwargs))
+            return await self.bot.send_media_group(chat_id=chat_id, media=tg_media)
+        finally:
+            for fh in opened:
+                if hasattr(fh, "close"):
+                    fh.close()
+
+
+def open_if_path(value: Any) -> Any:
+    if isinstance(value, (str, Path)) and Path(value).exists():
+        return open(value, "rb")
+    return value
+
+
+def convert_reply_markup(kwargs: dict[str, Any]) -> dict[str, Any]:
+    reply_markup = kwargs.get("reply_markup")
+    if isinstance(reply_markup, dict):
+        from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+
+        keyboard = []
+        for row in reply_markup.get("inline_keyboard", []):
+            keyboard.append([InlineKeyboardButton(**button) for button in row])
+        kwargs = dict(kwargs)
+        kwargs["reply_markup"] = InlineKeyboardMarkup(keyboard)
+    return kwargs
+
+
+def setup_logging() -> None:
+    log_dir = Path("logs")
+    log_dir.mkdir(exist_ok=True)
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s - %(levelname)s - %(message)s",
+        handlers=[
+            RotatingFileHandler(log_dir / "bot.log", maxBytes=10 * 1024 * 1024, backupCount=5, encoding="utf-8"),
+            logging.StreamHandler(),
+        ],
+    )
+
+
+async def error_handler(update: object, context: Any) -> None:
+    logging.error("Exception while handling an update:", exc_info=context.error)
+
+
+async def main() -> None:
+    load_dotenv()
+    setup_logging()
+    config = BotConfig.from_env(Path(__file__).resolve().parents[1])
+    config.validate_runtime()
+    config.data_dir.mkdir(parents=True, exist_ok=True)
+    config.media_dir.mkdir(parents=True, exist_ok=True)
+    config.temp_dir.mkdir(parents=True, exist_ok=True)
+
+    from telegram.ext import ApplicationBuilder, CallbackQueryHandler, CommandHandler, MessageHandler, filters
+
+    db = Database(config.database_path)
+    db.init()
+    application = ApplicationBuilder().token(config.bot_token).build()
+    archive_bot = ArchiveBot(config, db, GalleryDownloader(config.media_dir), TelegramBotClient(application.bot))
+
+    application.add_error_handler(error_handler)
+    application.add_handler(CommandHandler("start", archive_bot.start))
+    application.add_handler(CommandHandler("help", archive_bot.help_command))
+    application.add_handler(CommandHandler("config", archive_bot.config_command))
+    application.add_handler(CommandHandler("set", archive_bot.set_command))
+    application.add_handler(CommandHandler("pending", archive_bot.pending_command))
+    application.add_handler(CommandHandler("pixiv_status", archive_bot.pixiv_status_command))
+    application.add_handler(MessageHandler(~filters.COMMAND, archive_bot.handle_message))
+    application.add_handler(CallbackQueryHandler(archive_bot.handle_callback))
+
+    await application.initialize()
+    await application.start()
+    await application.updater.start_polling()
+
+    runner = None
+    if config.http_api_enabled:
+        runner = await run_http_api(archive_bot, config.http_api_host, config.http_api_port)
+        logging.info("HTTP API listening on %s:%s", config.http_api_host, config.http_api_port)
+    logging.info("Bot started successfully!")
+
+    try:
+        while True:
+            await asyncio.sleep(3600)
+    finally:
+        if runner:
+            await runner.cleanup()
+        await application.updater.stop()
+        await application.stop()
+        await application.shutdown()
