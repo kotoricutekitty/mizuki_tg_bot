@@ -854,6 +854,10 @@ def api_duplicate_result(existing: Submission) -> SubmitResult:
 
 
 async def edit_callback_message(query: Any, text: str) -> None:
+    message = getattr(query, "message", None)
+    if getattr(message, "caption", None) is not None and hasattr(query, "edit_message_caption"):
+        await query.edit_message_caption(caption=text)
+        return
     if hasattr(query, "edit_message_text"):
         await query.edit_message_text(text=text)
         return

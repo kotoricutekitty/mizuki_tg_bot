@@ -379,7 +379,8 @@ async def test_admin_moves_published_submission_to_r18_channel(app_factory, samp
     assert bot.calls[1]["method"] == "send_photo"
     assert bot.calls[1]["chat_id"] == "@r18"
     assert db.get_submission(sub_id).message_id == 101
-    assert query.edited_text == "original\n\n✅ 已经通过啦喵 by @admin"
+    assert query.edited_caption == "original\n\n✅ 已经通过啦喵 by @admin"
+    assert query.edited_text is None
 
 
 @pytest.mark.asyncio
@@ -456,7 +457,7 @@ async def test_admin_moves_published_submission_to_safe_channel(app_factory, sam
     assert bot.calls[1]["method"] == "send_photo"
     assert bot.calls[1]["chat_id"] == "@archive"
     assert db.get_submission(sub_id).message_id == 101
-    assert query.edited_text == "original\n\n✅ 已经通过啦喵 by @admin"
+    assert query.edited_caption == "original\n\n✅ 已经通过啦喵 by @admin"
 
 
 @pytest.mark.asyncio
@@ -487,7 +488,7 @@ async def test_admin_deletes_published_submission_from_forward_buttons(app_facto
     assert submission.status == "deleted"
     assert metadata["deleted_by"] == 1
     assert db.find_by_url("https://twitter.com/u/status/delete-me") is None
-    assert query.edited_text == "original\n\n🗑️ 已经删除啦喵 by @admin"
+    assert query.edited_caption == "original\n\n🗑️ 已经删除啦喵 by @admin"
 
 
 @pytest.mark.asyncio
