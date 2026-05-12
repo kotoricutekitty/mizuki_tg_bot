@@ -23,10 +23,10 @@ class BotConfig:
     twitter_bookmarks_enabled: bool = False
     twitter_bookmarks_user_id: str = ""
     twitter_bookmarks_access_token: str = ""
-    twitter_bookmarks_poll_seconds: float = 10.0
+    twitter_bookmarks_poll_seconds: float = 30.0
     twitter_bookmarks_grace_seconds: float = 10.0
-    twitter_bookmarks_idle_seconds: float = 20 * 60.0
-    twitter_bookmarks_max_results: int = 5
+    twitter_bookmarks_idle_seconds: float = 5 * 60.0
+    twitter_bookmarks_max_results: int = 10
     twitter_bookmarks_api_base: str = "https://api.x.com"
 
     @classmethod
@@ -51,10 +51,10 @@ class BotConfig:
             twitter_bookmarks_enabled=parse_bool(os.getenv("TWITTER_BOOKMARKS_ENABLED", "false")),
             twitter_bookmarks_user_id=os.getenv("TWITTER_BOOKMARKS_USER_ID", ""),
             twitter_bookmarks_access_token=os.getenv("TWITTER_BOOKMARKS_ACCESS_TOKEN", ""),
-            twitter_bookmarks_poll_seconds=float(os.getenv("TWITTER_BOOKMARKS_POLL_SECONDS", "10")),
+            twitter_bookmarks_poll_seconds=float(os.getenv("TWITTER_BOOKMARKS_POLL_SECONDS", "30")),
             twitter_bookmarks_grace_seconds=float(os.getenv("TWITTER_BOOKMARKS_GRACE_SECONDS", "10")),
-            twitter_bookmarks_idle_seconds=float(os.getenv("TWITTER_BOOKMARKS_IDLE_SECONDS", str(20 * 60))),
-            twitter_bookmarks_max_results=int(os.getenv("TWITTER_BOOKMARKS_MAX_RESULTS", "5")),
+            twitter_bookmarks_idle_seconds=float(os.getenv("TWITTER_BOOKMARKS_IDLE_SECONDS", str(5 * 60))),
+            twitter_bookmarks_max_results=int(os.getenv("TWITTER_BOOKMARKS_MAX_RESULTS", "10")),
             twitter_bookmarks_api_base=os.getenv("TWITTER_BOOKMARKS_API_BASE", "https://api.x.com"),
         )
 

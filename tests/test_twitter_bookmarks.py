@@ -36,10 +36,10 @@ def with_bookmark_config(config: BotConfig) -> BotConfig:
         twitter_bookmarks_enabled=True,
         twitter_bookmarks_user_id="123",
         twitter_bookmarks_access_token="token",
-        twitter_bookmarks_poll_seconds=5,
+        twitter_bookmarks_poll_seconds=30,
         twitter_bookmarks_grace_seconds=10,
-        twitter_bookmarks_idle_seconds=20 * 60,
-        twitter_bookmarks_max_results=5,
+        twitter_bookmarks_idle_seconds=5 * 60,
+        twitter_bookmarks_max_results=10,
     )
 
 
@@ -159,7 +159,7 @@ async def test_bookmark_monitor_activation_and_idle_shutdown(app_factory):
     await monitor.poll_once()
     assert monitor.active
 
-    clock.advance(20 * 60)
+    clock.advance(5 * 60)
     await monitor.poll_once()
     assert not monitor.active
     assert bot.calls[-1]["method"] == "send_message"
@@ -272,3 +272,15 @@ def test_x_bookmarks_client_maps_credits_depleted_http_error():
     assert isinstance(parsed, XCreditsDepletedError)
     assert parsed.status == 402
     assert parsed.title == "CreditsDepleted"
+
+
+def test_bookmark_config_defaults_use_requested_poll_window(monkeypatch):
+    monkeypatch.delenv("TWITTER_BOOKMARKS_POLL_SECONDS", raising=False)
+    monkeypatch.delenv("TWITTER_BOOKMARKS_IDLE_SECONDS", raising=False)
+    monkeypatch.delenv("TWITTER_BOOKMARKS_MAX_RESULTS", raising=False)
+
+    config = BotConfig.from_env()
+
+    assert config.twitter_bookmarks_poll_seconds == 30
+    assert config.twitter_bookmarks_idle_seconds == 5 * 60
+    assert config.twitter_bookmarks_max_results == 10
