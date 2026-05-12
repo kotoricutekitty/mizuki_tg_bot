@@ -132,6 +132,7 @@ async def main() -> None:
 
     db = Database(config.database_path)
     db.init()
+    apply_runtime_config_from_db(config, db)
     application = ApplicationBuilder().token(config.bot_token).build()
     archive_bot = ArchiveBot(
         config,
@@ -151,6 +152,7 @@ async def main() -> None:
     application.add_handler(CommandHandler("set", archive_bot.set_command))
     application.add_handler(CommandHandler("pending", archive_bot.pending_command))
     application.add_handler(CommandHandler("pixiv_status", archive_bot.pixiv_status_command))
+    application.add_handler(CommandHandler("nsfw_threshold", archive_bot.nsfw_threshold_command))
     application.add_handler(CommandHandler("bookmark_watch", archive_bot.bookmark_watch_command))
     application.add_handler(MessageHandler(~filters.COMMAND, archive_bot.handle_message))
     application.add_handler(CallbackQueryHandler(archive_bot.handle_callback))
@@ -201,3 +203,18 @@ async def main() -> None:
         await application.updater.stop()
         await application.stop()
         await application.shutdown()
+
+
+def apply_runtime_config_from_db(config: BotConfig, db: Database) -> None:
+    rows = dict(db.get_config_rows())
+    for key, attr in {
+        "NSFW_LOW_THRESHOLD": "nsfw_low_threshold",
+        "NSFW_HIGH_THRESHOLD": "nsfw_high_threshold",
+    }.items():
+        value = rows.get(key)
+        if value is None:
+            continue
+        try:
+            object.__setattr__(config, attr, float(value))
+        except ValueError:
+            continue

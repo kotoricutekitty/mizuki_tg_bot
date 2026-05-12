@@ -129,6 +129,34 @@ class ArchiveBot:
         count, first_time, last_time = self.db.count_pixiv_downloads(self.config.pixiv_limit_hours)
         await update.message.reply_text(messages.pixiv_status(count, first_time, last_time))
 
+    async def nsfw_threshold_command(self, update: Any, context: Any = None) -> None:
+        if update.effective_user.id not in self.config.admin_ids:
+            await update.message.reply_text(messages.PERMISSION_DENIED)
+            return
+        args = getattr(context, "args", [])
+        if not args:
+            await update.message.reply_text(
+                messages.nsfw_threshold_status(self.config.nsfw_low_threshold, self.config.nsfw_high_threshold)
+            )
+            return
+        if len(args) != 2:
+            await update.message.reply_text(messages.nsfw_threshold_usage())
+            return
+        try:
+            low = float(args[0])
+            high = float(args[1])
+        except ValueError:
+            await update.message.reply_text(messages.nsfw_threshold_usage())
+            return
+        if not 0 <= low < high <= 1:
+            await update.message.reply_text(messages.nsfw_threshold_usage())
+            return
+        object.__setattr__(self.config, "nsfw_low_threshold", low)
+        object.__setattr__(self.config, "nsfw_high_threshold", high)
+        self.db.set_config("NSFW_LOW_THRESHOLD", f"{low:.2f}")
+        self.db.set_config("NSFW_HIGH_THRESHOLD", f"{high:.2f}")
+        await update.message.reply_text(messages.nsfw_threshold_updated(low, high))
+
     async def bookmark_watch_command(self, update: Any, context: Any = None) -> None:
         if update.effective_user.id not in self.config.admin_ids:
             await update.message.reply_text(messages.BOOKMARK_WATCH_FORBIDDEN)
@@ -436,8 +464,35 @@ class ArchiveBot:
             metadata["channel_message_ids"] = channel_message_ids
             metadata["channel_id"] = str(target_channel)
             self.db.update_metadata(submission_id, metadata, self.clock.now())
+            published_submission = self.db.get_submission(submission_id)
+            if published_submission:
+                await self.notify_moderation_submission(published_submission, target_channel)
         logging.info("发布成功: 投稿 #%s 已发送到频道 %s", submission_id, target_channel)
         return channel_message_id
+
+    async def notify_moderation_submission(self, submission: Submission, target_channel: int | str) -> None:
+        if not self.config.r18_routing_enabled:
+            return
+        metadata = submission_metadata(submission)
+        caption = messages.moderation_caption(submission.id, submission.url, metadata)
+        reply_markup = moderation_reply_markup(
+            submission.id,
+            "r18" if str(target_channel) == self.config.r18_channel_id else "safe",
+        )
+        preview = first_existing_photo(submission.media_paths)
+        for admin_id in self.config.admin_ids:
+            try:
+                if preview:
+                    await self.bot.send_photo(
+                        chat_id=admin_id,
+                        photo=preview,
+                        caption=caption,
+                        reply_markup=reply_markup,
+                    )
+                else:
+                    await self.bot.send_message(admin_id, caption, reply_markup=reply_markup)
+            except Exception as exc:
+                logging.warning("无法给管理员%s发送投稿检测消息: %s", admin_id, exc)
 
     async def _send_single_media(
         self,
@@ -702,6 +757,8 @@ class ArchiveBot:
         metadata["safety_checked_count"] = decision.checked_count
         if decision.score is not None:
             metadata["safety_score"] = decision.score
+        if decision.class_name is not None:
+            metadata["safety_class"] = decision.class_name
         return decision
 
     def publish_channel_for_submission(self, submission: Submission) -> str:
@@ -745,6 +802,34 @@ def build_media_group(media_files: list[str], caption: str, parse_mode: str | No
             item["parse_mode"] = parse_mode
         media.append(item)
     return media
+
+
+def moderation_reply_markup(submission_id: int, source_key: str) -> dict[str, Any]:
+    return {
+        "inline_keyboard": [
+            [
+                {
+                    "text": messages.MOVE_TO_R18_BUTTON,
+                    "callback_data": f"move_r18:{submission_id}:{source_key}",
+                },
+                {
+                    "text": messages.MOVE_TO_SAFE_BUTTON,
+                    "callback_data": f"move_safe:{submission_id}:{source_key}",
+                },
+                {
+                    "text": messages.DELETE_POST_BUTTON,
+                    "callback_data": f"delete_post:{submission_id}:{source_key}",
+                },
+            ]
+        ]
+    }
+
+
+def first_existing_photo(media_files: list[str]) -> str | None:
+    for media_file in media_files:
+        if media_kind(media_file) == "photo" and os.path.exists(media_file):
+            return media_file
+    return None
 
 
 def api_duplicate_result(existing: Submission) -> SubmitResult:

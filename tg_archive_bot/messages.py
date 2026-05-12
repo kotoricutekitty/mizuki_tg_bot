@@ -66,6 +66,18 @@ def pixiv_status(count: int, first_time: str | None, last_time: str | None) -> s
     return text
 
 
+def nsfw_threshold_status(low: float, high: float) -> str:
+    return f"📊 当前NSFW阈值喵：low={low:.2f}, high={high:.2f}"
+
+
+def nsfw_threshold_usage() -> str:
+    return "用法喵：/nsfw_threshold <low> <high>"
+
+
+def nsfw_threshold_updated(low: float, high: float) -> str:
+    return f"好哒！NSFW阈值已更新喵：low={low:.2f}, high={high:.2f}"
+
+
 def original_found(url: str) -> str:
     return f"😺 找到投稿原图啦喵！正在发送...\n原链接: {url}"
 
@@ -192,6 +204,16 @@ def api_notify(submission_id: int, url: str, metadata: dict) -> str:
         notify_text += f"标题: {metadata.get('title')}\n"
     notify_text += "已自动发布到频道 ✅"
     return notify_text
+
+
+def moderation_caption(submission_id: int, url: str, metadata: dict) -> str:
+    score = metadata.get("safety_score")
+    score_text = f"{score:.2f}" if isinstance(score, (int, float)) else "n/a"
+    class_text = metadata.get("safety_class") or "n/a"
+    text = f"投稿 #{submission_id}\n"
+    text += f"nudenet score {score_text}, {class_text}\n"
+    text += f"{url}"
+    return text
 
 
 def admin_error(source: str, detail: str) -> str:

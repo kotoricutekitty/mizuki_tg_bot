@@ -167,16 +167,18 @@ class FakeBookmarkClient:
 
 
 class FakeSafetyDetector:
-    def __init__(self, scores: list[float | None]):
+    def __init__(self, scores: list[float | tuple[float | None, str | None] | None]):
         self.scores = scores
         self.calls: list[list[str]] = []
 
-    async def score_images(self, image_paths: list[str]) -> tuple[float | None, int]:
+    async def score_images(self, image_paths: list[str]) -> tuple[float | None, int, str | None]:
         self.calls.append(list(image_paths))
         if not self.scores:
-            return None, 0
+            return None, 0, None
         score = self.scores.pop(0)
-        return score, len(image_paths)
+        if isinstance(score, tuple):
+            return score[0], len(image_paths), score[1]
+        return score, len(image_paths), "FAKE_CLASS" if score is not None else None
 
 
 def make_image(path: Path, fmt: str = "JPEG") -> str:

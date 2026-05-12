@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from tests.fakes import FakeCallbackQuery, FakeSafetyDetector, FakeSentMessage, FakeUpdate, FakeUser, make_image
@@ -61,6 +63,35 @@ async def test_twitter_image_detection_checks_at_most_four_images(app_factory, t
 
 
 @pytest.mark.asyncio
+async def test_admin_moderation_notice_after_auto_publish(app_factory, sample_media):
+    url = "https://poipiku.com/123/321.html"
+    detector = FakeSafetyDetector([(0.10, "FEMALE_BREAST_EXPOSED")])
+    service, db, bot, _ = app_factory(
+        {url: ([sample_media["jpg"]], {"canonical_url": url})},
+        r18_channel="@r18",
+        safety_detector=detector,
+    )
+
+    result = await service.api_submit(url, "api-token", "127.0.0.1")
+
+    assert result.status == 200
+    submission = db.get_submission(result.body["submission_id"])
+    metadata = json.loads(submission.metadata_json)
+    assert metadata["safety_score"] == 0.10
+    assert metadata["safety_class"] == "FEMALE_BREAST_EXPOSED"
+    moderation = bot.calls[1]
+    assert moderation["method"] == "send_photo"
+    assert moderation["chat_id"] == 1
+    assert moderation["caption"] == f"投稿 #{submission.id}\nnudenet score 0.10, FEMALE_BREAST_EXPOSED\n{url}"
+    buttons = moderation["reply_markup"]["inline_keyboard"][0]
+    assert [button["text"] for button in buttons] == [
+        "转到色图频道",
+        "转到不色频道",
+        "删除推文",
+    ]
+
+
+@pytest.mark.asyncio
 async def test_poipiku_uncertain_detection_checks_all_images_and_goes_pending(app_factory, tmp_path):
     url = "https://poipiku.com/123/456.html"
     media = [make_image(tmp_path / "poipiku" / f"{index}.jpg") for index in range(3)]
@@ -97,6 +128,6 @@ async def test_admin_can_approve_uncertain_submission_as_r18(app_factory, sample
 
     submission = db.get_submission(result.body["submission_id"])
     assert submission.status == "approved"
-    assert bot.calls[-2]["method"] == "send_photo"
-    assert bot.calls[-2]["chat_id"] == "@r18"
+    published = [call for call in bot.calls if call["method"] == "send_photo" and call["chat_id"] == "@r18"]
+    assert published
     assert query.edited_caption == "review\n\n✅ 已经通过啦喵 by @admin"

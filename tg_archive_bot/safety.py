@@ -15,18 +15,19 @@ from .url_utils import provider_for_url
 class SafetyDecision:
     rating: str
     score: float | None = None
+    class_name: str | None = None
     reason: str = ""
     checked_count: int = 0
 
 
 class ImageSafetyDetector(Protocol):
-    async def score_images(self, image_paths: list[str]) -> tuple[float | None, int]:
+    async def score_images(self, image_paths: list[str]) -> tuple[float | None, int, str | None]:
         ...
 
 
 class NoopImageSafetyDetector:
-    async def score_images(self, image_paths: list[str]) -> tuple[float | None, int]:
-        return None, 0
+    async def score_images(self, image_paths: list[str]) -> tuple[float | None, int, str | None]:
+        return None, 0, None
 
 
 class NudeNetImageSafetyDetector:
@@ -37,28 +38,38 @@ class NudeNetImageSafetyDetector:
             raise RuntimeError("nudenet is not installed") from exc
         self.detector = NudeDetector()
 
-    async def score_images(self, image_paths: list[str]) -> tuple[float | None, int]:
+    async def score_images(self, image_paths: list[str]) -> tuple[float | None, int, str | None]:
         if not image_paths:
-            return None, 0
-        scores = await asyncio.to_thread(self._score_images_sync, image_paths)
-        if not scores:
-            return None, 0
-        return max(scores), len(scores)
+            return None, 0, None
+        results = await asyncio.to_thread(self._score_images_sync, image_paths)
+        if not results:
+            return None, 0, None
+        score, class_name = max(results, key=lambda item: item[0])
+        return score, len(results), class_name
 
-    def _score_images_sync(self, image_paths: list[str]) -> list[float]:
-        scores: list[float] = []
+    def _score_images_sync(self, image_paths: list[str]) -> list[tuple[float, str]]:
+        scores: list[tuple[float, str]] = []
         for image_path in image_paths:
             try:
                 detections = self.detector.detect(image_path)
             except Exception as exc:  # pragma: no cover - model/runtime specific
                 logging.warning("NSFW image detection failed for %s: %s", image_path, exc)
                 continue
-            scores.append(max((detection_score(item) for item in detections), default=0.0))
+            best = max(
+                ((detection_score(item), detection_label(item)) for item in detections),
+                default=(0.0, "none"),
+                key=lambda item: item[0],
+            )
+            scores.append(best)
         return scores
 
 
+def detection_label(item: dict[str, Any]) -> str:
+    return str(item.get("class") or item.get("label") or "none").upper()
+
+
 def detection_score(item: dict[str, Any]) -> float:
-    label = str(item.get("class") or item.get("label") or "").upper()
+    label = detection_label(item)
     score = float(item.get("score") or item.get("confidence") or 0.0)
     adult_labels = (
         "FEMALE_BREAST_EXPOSED",
@@ -109,14 +120,14 @@ async def classify_safety(
     if detector is None:
         return SafetyDecision("uncertain", reason="nsfw detector unavailable")
 
-    score, checked_count = await detector.score_images(image_paths)
+    score, checked_count, class_name = await detector.score_images(image_paths)
     if score is None:
         return SafetyDecision("uncertain", reason="nsfw detector returned no score", checked_count=checked_count)
     if score >= config.nsfw_high_threshold:
-        return SafetyDecision("r18", score=score, reason="nsfw score above high threshold", checked_count=checked_count)
+        return SafetyDecision("r18", score=score, class_name=class_name, reason="nsfw score above high threshold", checked_count=checked_count)
     if score <= config.nsfw_low_threshold:
-        return SafetyDecision("safe", score=score, reason="nsfw score below low threshold", checked_count=checked_count)
-    return SafetyDecision("uncertain", score=score, reason="nsfw score is uncertain", checked_count=checked_count)
+        return SafetyDecision("safe", score=score, class_name=class_name, reason="nsfw score below low threshold", checked_count=checked_count)
+    return SafetyDecision("uncertain", score=score, class_name=class_name, reason="nsfw score is uncertain", checked_count=checked_count)
 
 
 def metadata_r18_reason(metadata: dict[str, Any]) -> str | None:
