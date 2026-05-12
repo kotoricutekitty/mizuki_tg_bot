@@ -3,8 +3,9 @@ from __future__ import annotations
 import logging
 import os
 import json
+import traceback
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -78,6 +79,7 @@ class ArchiveBot:
         self.clock = clock or SystemClock()
         self.safety_detector = safety_detector
         self.bookmark_monitor: BookmarkActivator | None = None
+        self._last_error_notifications: dict[str, datetime] = {}
 
     async def start(self, update: Any, context: Any = None) -> None:
         await update.message.reply_text(messages.START_TEXT)
@@ -162,6 +164,29 @@ class ArchiveBot:
                 await self.bot.send_message(admin_id, text)
             except Exception as exc:
                 logging.exception("Failed to notify admin %s: %s", admin_id, exc)
+
+    async def notify_admin_error(
+        self,
+        source: str,
+        exc: BaseException | None = None,
+        *,
+        detail: str = "",
+        throttle_key: str | None = None,
+        throttle_seconds: int = 300,
+    ) -> None:
+        key = throttle_key or source
+        now = self.clock.now()
+        last_sent = self._last_error_notifications.get(key)
+        if last_sent and now - last_sent < timedelta(seconds=throttle_seconds):
+            return
+        self._last_error_notifications[key] = now
+        error_detail = detail.strip()
+        if exc is not None:
+            exception_text = "".join(traceback.format_exception_only(type(exc), exc)).strip()
+            error_detail = f"{error_detail}\n{exception_text}".strip()
+        if not error_detail:
+            error_detail = "没有更多错误信息。"
+        await self._notify_admins(messages.admin_error(source, error_detail[:1500]))
 
     async def handle_message(self, update: Any, context: Any = None) -> None:
         if not update.message:

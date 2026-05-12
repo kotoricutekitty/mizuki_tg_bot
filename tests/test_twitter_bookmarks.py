@@ -249,9 +249,10 @@ async def test_bookmark_monitor_stops_when_x_credits_are_depleted(app_factory):
 
     assert not monitor.active
     assert downloader.calls == []
-    assert bot.calls == [
-        {"method": "send_message", "chat_id": 1, "text": messages.BOOKMARK_WATCH_STOPPED_CREDITS}
-    ]
+    assert bot.calls[0] == {"method": "send_message", "chat_id": 1, "text": messages.BOOKMARK_WATCH_STOPPED_CREDITS}
+    assert bot.calls[1]["method"] == "send_message"
+    assert bot.calls[1]["chat_id"] == 1
+    assert messages.ADMIN_ERROR_PREFIX in bot.calls[1]["text"]
     assert db.bookmark_item_count() == 0
     assert db.get_bookmark_monitor_state("last_error_code") == "credits_depleted"
     assert "CreditsDepleted" in db.get_bookmark_monitor_state("last_error")
@@ -353,3 +354,30 @@ def test_x_bookmarks_client_raises_401_without_refresh(monkeypatch):
         client._fetch_bookmarks_sync()
 
     assert exc.value.status == 401
+
+
+@pytest.mark.asyncio
+async def test_bookmark_poll_error_notifies_admins_with_throttle(app_factory):
+    service, db, bot, _ = app_factory()
+    clock = FakeClock()
+
+    class BrokenClient:
+        async def fetch_bookmarks(self):
+            raise RuntimeError("boom")
+
+    monitor = monitor_for(service, db, BrokenClient(), clock)
+    monitor.activate()
+
+    await monitor.poll_once()
+    await monitor.poll_once()
+
+    error_calls = [call for call in bot.calls if call["method"] == "send_message" and messages.ADMIN_ERROR_PREFIX in call["text"]]
+    assert len(error_calls) == 1
+    assert "Twitter bookmark monitor poll failed" in error_calls[0]["text"]
+    assert "RuntimeError: boom" in error_calls[0]["text"]
+    assert db.get_bookmark_monitor_state("last_error_code") == "poll_failed"
+
+    service.clock.advance(301)
+    await monitor.poll_once()
+    error_calls = [call for call in bot.calls if call["method"] == "send_message" and messages.ADMIN_ERROR_PREFIX in call["text"]]
+    assert len(error_calls) == 2

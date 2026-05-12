@@ -33,6 +33,7 @@ BOOKMARK_WATCH_STARTED = "✅ Twitter bookmark 监控已开启喵！每30秒检�
 BOOKMARK_WATCH_STOPPED_IDLE = "⏸ Twitter bookmark 监控已自动关闭喵：5分钟没有更新。"
 BOOKMARK_WATCH_STOPPED_CREDITS = "⏸ Twitter bookmark 监控已停止喵：X API credits 不足，请补充后再开启。"
 BOOKMARK_WATCH_FORBIDDEN = "呜喵...你没有权限做这个操作喵😾"
+ADMIN_ERROR_PREFIX = "⚠️ Bot 报错喵"
 
 APPROVE_BUTTON = "✅ 通过"
 REJECT_BUTTON = "❌ 拒绝"
@@ -186,3 +187,7 @@ def api_notify(submission_id: int, url: str, metadata: dict) -> str:
         notify_text += f"标题: {metadata.get('title')}\n"
     notify_text += "已自动发布到频道 ✅"
     return notify_text
+
+
+def admin_error(source: str, detail: str) -> str:
+    return f"{ADMIN_ERROR_PREFIX}：{source}\n{detail}"

@@ -26,15 +26,33 @@ async def run_http_api(bot: ArchiveBot, host: str, port: int):
     from aiohttp import web
 
     async def handle_submit(request: web.Request) -> web.Response:
-        token = request.headers.get("X-Post-Token", "")
-        payload = await request.json()
-        result = await submit_payload(bot, payload, token, request.remote or "")
-        return web.json_response(result.body, status=result.status)
+        try:
+            token = request.headers.get("X-Post-Token", "")
+            payload = await request.json()
+            result = await submit_payload(bot, payload, token, request.remote or "")
+            return web.json_response(result.body, status=result.status)
+        except Exception as exc:
+            await bot.notify_admin_error(
+                "HTTP /submit failed",
+                exc,
+                detail=f"remote={request.remote or ''}",
+                throttle_key=f"http_submit:{type(exc).__name__}:{str(exc)[:120]}",
+            )
+            raise
 
     async def handle_bookmarks_start(request: web.Request) -> web.Response:
-        token = request.headers.get("X-Post-Token", "")
-        result = await start_bookmarks(bot, token)
-        return web.json_response(result.body, status=result.status)
+        try:
+            token = request.headers.get("X-Post-Token", "")
+            result = await start_bookmarks(bot, token)
+            return web.json_response(result.body, status=result.status)
+        except Exception as exc:
+            await bot.notify_admin_error(
+                "HTTP /bookmarks/start failed",
+                exc,
+                detail=f"remote={request.remote or ''}",
+                throttle_key=f"http_bookmarks_start:{type(exc).__name__}:{str(exc)[:120]}",
+            )
+            raise
 
     app = web.Application()
     app.add_routes([

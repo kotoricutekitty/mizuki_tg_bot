@@ -224,6 +224,11 @@ class TwitterBookmarkMonitor:
                 raise
             except Exception as exc:
                 logging.exception("Twitter bookmark monitor poll failed: %s", exc)
+                await self.archive_bot.notify_admin_error(
+                    "Twitter bookmark monitor poll failed",
+                    exc,
+                    throttle_key=f"bookmark_run_forever:{type(exc).__name__}:{str(exc)[:120]}",
+                )
             await asyncio.sleep(self.config.twitter_bookmarks_poll_seconds)
 
     async def poll_once(self) -> None:
@@ -237,6 +242,21 @@ class TwitterBookmarkMonitor:
             self.db.set_bookmark_monitor_state("credits_depleted_at", now.isoformat())
             logging.error("Twitter bookmark monitor stopped because X API credits are depleted: %s", exc)
             await self.archive_bot.notify_bookmark_watch_stopped("credits_depleted")
+            await self.archive_bot.notify_admin_error(
+                "Twitter bookmark monitor stopped",
+                exc,
+                throttle_key="bookmark_credits_depleted",
+            )
+            return
+        except Exception as exc:
+            self.db.set_bookmark_monitor_state("last_error_code", "poll_failed")
+            self.db.set_bookmark_monitor_state("last_error", str(exc))
+            logging.exception("Twitter bookmark monitor poll failed: %s", exc)
+            await self.archive_bot.notify_admin_error(
+                "Twitter bookmark monitor poll failed",
+                exc,
+                throttle_key=f"bookmark_poll:{type(exc).__name__}:{str(exc)[:120]}",
+            )
             return
         current_ids = {post.tweet_id for post in posts}
         changed = self.last_seen_ids is None or current_ids != self.last_seen_ids
@@ -286,6 +306,12 @@ class TwitterBookmarkMonitor:
                 logging.exception("Failed to submit bookmark %s: %s", item.tweet_id, exc)
                 self.db.mark_bookmark_failed(item.tweet_id, str(exc), now)
                 self.last_activity_at = now
+                await self.archive_bot.notify_admin_error(
+                    "Twitter bookmark submit failed",
+                    exc,
+                    detail=f"tweet_id={item.tweet_id}\nurl={item.url}",
+                    throttle_key=f"bookmark_submit:{item.tweet_id}",
+                )
 
         if self.last_activity_at and now - self.last_activity_at >= timedelta(seconds=self.config.twitter_bookmarks_idle_seconds):
             self.active = False

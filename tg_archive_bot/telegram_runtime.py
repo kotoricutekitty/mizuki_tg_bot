@@ -107,8 +107,15 @@ def create_bookmark_token_refresher(config: BotConfig, env_path: Path) -> XOAuth
     )
 
 
-async def error_handler(update: object, context: Any) -> None:
+async def error_handler(update: object, context: Any, archive_bot: ArchiveBot | None = None) -> None:
     logging.error("Exception while handling an update:", exc_info=context.error)
+    if archive_bot is not None:
+        await archive_bot.notify_admin_error(
+            "Telegram update handler failed",
+            context.error,
+            detail=f"update={update!r}",
+            throttle_key=f"telegram_handler:{type(context.error).__name__}:{str(context.error)[:120]}",
+        )
 
 
 async def main() -> None:
@@ -134,7 +141,10 @@ async def main() -> None:
         safety_detector=create_image_safety_detector(config),
     )
 
-    application.add_error_handler(error_handler)
+    async def notify_error_handler(update: object, context: Any) -> None:
+        await error_handler(update, context, archive_bot)
+
+    application.add_error_handler(notify_error_handler)
     application.add_handler(CommandHandler("start", archive_bot.start))
     application.add_handler(CommandHandler("help", archive_bot.help_command))
     application.add_handler(CommandHandler("config", archive_bot.config_command))
