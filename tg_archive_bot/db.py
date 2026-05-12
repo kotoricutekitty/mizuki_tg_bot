@@ -311,35 +311,47 @@ class Database:
         with self.connect() as conn:
             conn.execute("INSERT INTO pixiv_downloads (request_time, url) VALUES (datetime('now'), ?)", (url,))
 
-    def bookmark_item_count(self) -> int:
+    def bookmark_item_count(self, provider: str = "twitter") -> int:
+        item_table, _ = bookmark_tables(provider)
         with self.connect() as conn:
-            row = conn.execute("SELECT COUNT(*) count FROM twitter_bookmark_items").fetchone()
+            row = conn.execute(f"SELECT COUNT(*) count FROM {item_table}").fetchone()
         return int(row["count"])
 
-    def known_bookmark_ids(self) -> set[str]:
+    def known_bookmark_ids(self, provider: str = "twitter") -> set[str]:
+        item_table, _ = bookmark_tables(provider)
         with self.connect() as conn:
-            rows = conn.execute("SELECT tweet_id FROM twitter_bookmark_items").fetchall()
+            rows = conn.execute(f"SELECT tweet_id FROM {item_table}").fetchall()
         return {str(row["tweet_id"]) for row in rows}
 
-    def get_bookmark_monitor_state(self, key: str) -> str | None:
+    def get_bookmark_monitor_state(self, key: str, provider: str = "twitter") -> str | None:
+        _, state_table = bookmark_tables(provider)
         with self.connect() as conn:
-            row = conn.execute("SELECT value FROM twitter_bookmark_monitor_state WHERE key = ?", (key,)).fetchone()
+            row = conn.execute(f"SELECT value FROM {state_table} WHERE key = ?", (key,)).fetchone()
         return row["value"] if row else None
 
-    def set_bookmark_monitor_state(self, key: str, value: str) -> None:
+    def set_bookmark_monitor_state(self, key: str, value: str, provider: str = "twitter") -> None:
+        _, state_table = bookmark_tables(provider)
         with self.connect() as conn:
             conn.execute(
-                "INSERT OR REPLACE INTO twitter_bookmark_monitor_state (key, value) VALUES (?, ?)",
+                f"INSERT OR REPLACE INTO {state_table} (key, value) VALUES (?, ?)",
                 (key, value),
             )
 
-    def mark_bookmark_seen(self, tweet_id: str, url: str, now: datetime, initial_status: str = "pending") -> None:
+    def mark_bookmark_seen(
+        self,
+        tweet_id: str,
+        url: str,
+        now: datetime,
+        initial_status: str = "pending",
+        provider: str = "twitter",
+    ) -> None:
+        item_table, _ = bookmark_tables(provider)
         with self.connect() as conn:
-            row = conn.execute("SELECT status FROM twitter_bookmark_items WHERE tweet_id = ?", (tweet_id,)).fetchone()
+            row = conn.execute(f"SELECT status FROM {item_table} WHERE tweet_id = ?", (tweet_id,)).fetchone()
             if row is None:
                 conn.execute(
-                    """
-                    INSERT INTO twitter_bookmark_items (
+                    f"""
+                    INSERT INTO {item_table} (
                       tweet_id, url, status, first_seen_at, last_seen_at, updated_at
                     ) VALUES (?, ?, ?, ?, ?, ?)
                     """,
@@ -348,8 +360,8 @@ class Database:
                 return
             if row["status"] == "removed":
                 conn.execute(
-                    """
-                    UPDATE twitter_bookmark_items
+                    f"""
+                    UPDATE {item_table}
                     SET url = ?, status = 'pending', first_seen_at = ?, last_seen_at = ?,
                         removed_at = NULL, error = NULL, updated_at = ?
                     WHERE tweet_id = ?
@@ -358,61 +370,85 @@ class Database:
                 )
                 return
             conn.execute(
-                "UPDATE twitter_bookmark_items SET url = ?, last_seen_at = ?, updated_at = ? WHERE tweet_id = ?",
+                f"UPDATE {item_table} SET url = ?, last_seen_at = ?, updated_at = ? WHERE tweet_id = ?",
                 (url, now, now, tweet_id),
             )
 
-    def active_bookmark_items(self) -> list[BookmarkItem]:
+    def active_bookmark_items(self, provider: str = "twitter") -> list[BookmarkItem]:
+        item_table, _ = bookmark_tables(provider)
         with self.connect() as conn:
             rows = conn.execute(
-                "SELECT * FROM twitter_bookmark_items WHERE status IN ('baseline', 'pending')"
+                f"SELECT * FROM {item_table} WHERE status IN ('baseline', 'pending')"
             ).fetchall()
         return [row_to_bookmark_item(row) for row in rows]
 
-    def pending_bookmark_items(self) -> list[BookmarkItem]:
+    def pending_bookmark_items(self, provider: str = "twitter") -> list[BookmarkItem]:
+        item_table, _ = bookmark_tables(provider)
         with self.connect() as conn:
-            rows = conn.execute("SELECT * FROM twitter_bookmark_items WHERE status = 'pending'").fetchall()
+            rows = conn.execute(f"SELECT * FROM {item_table} WHERE status = 'pending'").fetchall()
         return [row_to_bookmark_item(row) for row in rows]
 
-    def mark_bookmark_removed(self, tweet_id: str, now: datetime) -> None:
+    def mark_bookmark_removed(self, tweet_id: str, now: datetime, provider: str = "twitter") -> None:
+        item_table, _ = bookmark_tables(provider)
         with self.connect() as conn:
             conn.execute(
-                """
-                UPDATE twitter_bookmark_items
+                f"""
+                UPDATE {item_table}
                 SET status = 'removed', removed_at = ?, updated_at = ?
                 WHERE tweet_id = ? AND status IN ('baseline', 'pending')
                 """,
                 (now, now, tweet_id),
             )
 
-    def mark_bookmark_submitted(self, tweet_id: str, submission_id: int | None, now: datetime) -> None:
+    def mark_bookmark_submitted(
+        self,
+        tweet_id: str,
+        submission_id: int | None,
+        now: datetime,
+        provider: str = "twitter",
+    ) -> None:
+        item_table, _ = bookmark_tables(provider)
         with self.connect() as conn:
             conn.execute(
-                """
-                UPDATE twitter_bookmark_items
+                f"""
+                UPDATE {item_table}
                 SET status = 'submitted', submitted_at = ?, submission_id = ?, updated_at = ?, error = NULL
                 WHERE tweet_id = ?
                 """,
                 (now, submission_id, now, tweet_id),
             )
 
-    def mark_bookmark_duplicate(self, tweet_id: str, submission_id: int | None, now: datetime) -> None:
+    def mark_bookmark_duplicate(
+        self,
+        tweet_id: str,
+        submission_id: int | None,
+        now: datetime,
+        provider: str = "twitter",
+    ) -> None:
+        item_table, _ = bookmark_tables(provider)
         with self.connect() as conn:
             conn.execute(
-                """
-                UPDATE twitter_bookmark_items
+                f"""
+                UPDATE {item_table}
                 SET status = 'duplicate', submitted_at = ?, submission_id = ?, updated_at = ?, error = NULL
                 WHERE tweet_id = ?
                 """,
                 (now, submission_id, now, tweet_id),
             )
 
-    def mark_bookmark_failed(self, tweet_id: str, error: str, now: datetime) -> None:
+    def mark_bookmark_failed(self, tweet_id: str, error: str, now: datetime, provider: str = "twitter") -> None:
+        item_table, _ = bookmark_tables(provider)
         with self.connect() as conn:
             conn.execute(
-                "UPDATE twitter_bookmark_items SET status = 'failed', error = ?, updated_at = ? WHERE tweet_id = ?",
+                f"UPDATE {item_table} SET status = 'failed', error = ?, updated_at = ? WHERE tweet_id = ?",
                 (error[:1000], now, tweet_id),
             )
+
+
+def bookmark_tables(provider: str) -> tuple[str, str]:
+    if provider not in {"twitter", "pixiv", "poipiku"}:
+        raise ValueError(f"Unsupported bookmark provider: {provider}")
+    return f"{provider}_bookmark_items", f"{provider}_bookmark_monitor_state"
 
 
 def row_to_submission(row: sqlite3.Row) -> Submission:
@@ -563,6 +599,42 @@ CREATE TABLE IF NOT EXISTS twitter_bookmark_monitor_state (
   value TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS pixiv_bookmark_items (
+  tweet_id TEXT PRIMARY KEY,
+  url TEXT NOT NULL,
+  status TEXT NOT NULL,
+  first_seen_at TIMESTAMP NOT NULL,
+  last_seen_at TIMESTAMP NOT NULL,
+  submitted_at TIMESTAMP,
+  removed_at TIMESTAMP,
+  submission_id INTEGER,
+  error TEXT,
+  updated_at TIMESTAMP NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS pixiv_bookmark_monitor_state (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS poipiku_bookmark_items (
+  tweet_id TEXT PRIMARY KEY,
+  url TEXT NOT NULL,
+  status TEXT NOT NULL,
+  first_seen_at TIMESTAMP NOT NULL,
+  last_seen_at TIMESTAMP NOT NULL,
+  submitted_at TIMESTAMP,
+  removed_at TIMESTAMP,
+  submission_id INTEGER,
+  error TEXT,
+  updated_at TIMESTAMP NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS poipiku_bookmark_monitor_state (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS moderation_logs (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   submission_id INTEGER,
@@ -582,6 +654,10 @@ CREATE INDEX IF NOT EXISTS idx_submissions_canonical_url ON submissions(canonica
 CREATE INDEX IF NOT EXISTS idx_pixiv_downloads_request_time ON pixiv_downloads(request_time);
 CREATE INDEX IF NOT EXISTS idx_twitter_bookmark_items_status ON twitter_bookmark_items(status);
 CREATE INDEX IF NOT EXISTS idx_twitter_bookmark_items_first_seen ON twitter_bookmark_items(first_seen_at);
+CREATE INDEX IF NOT EXISTS idx_pixiv_bookmark_items_status ON pixiv_bookmark_items(status);
+CREATE INDEX IF NOT EXISTS idx_pixiv_bookmark_items_first_seen ON pixiv_bookmark_items(first_seen_at);
+CREATE INDEX IF NOT EXISTS idx_poipiku_bookmark_items_status ON poipiku_bookmark_items(status);
+CREATE INDEX IF NOT EXISTS idx_poipiku_bookmark_items_first_seen ON poipiku_bookmark_items(first_seen_at);
 CREATE INDEX IF NOT EXISTS idx_moderation_logs_submission_id ON moderation_logs(submission_id);
 CREATE INDEX IF NOT EXISTS idx_moderation_logs_created_at ON moderation_logs(created_at);
 """

@@ -26,6 +26,7 @@ class BotConfig:
     nsfw_high_threshold: float = 0.80
     nsfw_low_threshold: float = 0.25
     nsfw_twitter_max_images: int = 4
+    bookmarks_enabled: bool = False
     twitter_bookmarks_enabled: bool = False
     twitter_bookmarks_user_id: str = ""
     twitter_bookmarks_access_token: str = ""
@@ -39,6 +40,11 @@ class BotConfig:
     twitter_bookmarks_max_results: int = 10
     twitter_bookmarks_max_pages: int = 4
     twitter_bookmarks_api_base: str = "https://api.x.com"
+    pixiv_bookmarks_user_id: str = ""
+    pixiv_bookmarks_cookies: Path | None = None
+    poipiku_bookmarks_cookies: Path | None = None
+    web_bookmarks_max_results: int = 20
+    web_bookmarks_max_pages: int = 4
     gallery_dl_cookies: Path | None = None
 
     @classmethod
@@ -48,6 +54,7 @@ class BotConfig:
         database_path = Path(os.getenv("DATABASE_PATH", data_dir / "db.sqlite"))
         media_dir = Path(os.getenv("MEDIA_DIR", data_dir / "media"))
         temp_dir = Path(os.getenv("TEMP_DIR", data_dir / "tmp"))
+        gallery_dl_cookies = parse_optional_path(os.getenv("GALLERY_DL_COOKIES") or os.getenv("POIPIKU_COOKIES"))
         return cls(
             bot_token=os.getenv("BOT_TOKEN", ""),
             admin_ids=parse_admin_ids(os.getenv("ADMIN_IDS", "")),
@@ -66,6 +73,7 @@ class BotConfig:
             nsfw_high_threshold=float(os.getenv("NSFW_HIGH_THRESHOLD", "0.80")),
             nsfw_low_threshold=float(os.getenv("NSFW_LOW_THRESHOLD", "0.25")),
             nsfw_twitter_max_images=int(os.getenv("NSFW_TWITTER_MAX_IMAGES", "4")),
+            bookmarks_enabled=parse_bool(os.getenv("BOOKMARKS_ENABLED", os.getenv("TWITTER_BOOKMARKS_ENABLED", "false"))),
             twitter_bookmarks_enabled=parse_bool(os.getenv("TWITTER_BOOKMARKS_ENABLED", "false")),
             twitter_bookmarks_user_id=os.getenv("TWITTER_BOOKMARKS_USER_ID", ""),
             twitter_bookmarks_access_token=os.getenv("TWITTER_BOOKMARKS_ACCESS_TOKEN", ""),
@@ -79,7 +87,12 @@ class BotConfig:
             twitter_bookmarks_max_results=int(os.getenv("TWITTER_BOOKMARKS_MAX_RESULTS", "10")),
             twitter_bookmarks_max_pages=int(os.getenv("TWITTER_BOOKMARKS_MAX_PAGES", "4")),
             twitter_bookmarks_api_base=os.getenv("TWITTER_BOOKMARKS_API_BASE", "https://api.x.com"),
-            gallery_dl_cookies=parse_optional_path(os.getenv("GALLERY_DL_COOKIES") or os.getenv("POIPIKU_COOKIES")),
+            pixiv_bookmarks_user_id=os.getenv("PIXIV_BOOKMARKS_USER_ID", ""),
+            pixiv_bookmarks_cookies=parse_optional_path(os.getenv("PIXIV_BOOKMARKS_COOKIES") or os.getenv("PIXIV_COOKIES")),
+            poipiku_bookmarks_cookies=parse_optional_path(os.getenv("POIPIKU_BOOKMARKS_COOKIES")) or gallery_dl_cookies,
+            web_bookmarks_max_results=int(os.getenv("WEB_BOOKMARKS_MAX_RESULTS", "20")),
+            web_bookmarks_max_pages=int(os.getenv("WEB_BOOKMARKS_MAX_PAGES", "4")),
+            gallery_dl_cookies=gallery_dl_cookies,
         )
 
     def validate_runtime(self) -> None:

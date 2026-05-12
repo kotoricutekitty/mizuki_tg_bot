@@ -11,6 +11,7 @@ The bot runs in polling mode by default, stores metadata in SQLite, keeps origin
 - Local SQLite database and local media archive
 - Original media retrieval by forwarding a channel post back to the bot
 - Optional HTTP `/submit` API
+- Unified `/bookmark_watch` monitor for configured Twitter, Pixiv, and Poipiku bookmarks
 - No Cloudflare Worker, D1, R2, or Queue dependency
 
 ## Quick Start
@@ -32,6 +33,8 @@ PUBLISH_CHANNEL_ID=@your_channel_username
 ```
 
 Optional HTTP API is disabled by default. Set `HTTP_API_ENABLED=true` and `POST_TOKEN` to enable it.
+
+Bookmark watching is also optional. `/bookmark_watch` or HTTP `POST /bookmarks/start` starts every configured source together. Twitter uses OAuth credentials, Pixiv uses `PIXIV_BOOKMARKS_USER_ID` plus a Netscape cookies file, and Poipiku uses a Netscape cookies file. Existing bookmarks present when watching starts are treated as candidates and are submitted after the stability window if they are still bookmarked.
 
 ## Testing
 

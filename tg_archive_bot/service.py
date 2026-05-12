@@ -250,9 +250,9 @@ class ArchiveBot:
 
     def activate_bookmark_watch(self) -> SubmitResult:
         if not self.bookmark_monitor or not self.bookmark_monitor.is_configured():
-            return SubmitResult(503, {"status": "unavailable", "message": "Twitter bookmark monitor is not configured"})
+            return SubmitResult(503, {"status": "unavailable", "message": "Bookmark monitor is not configured"})
         self.bookmark_monitor.activate()
-        return SubmitResult(200, {"status": "started", "message": "Twitter bookmark monitor started"})
+        return SubmitResult(200, {"status": "started", "message": "Bookmark monitors started"})
 
     async def notify_bookmark_watch_started(self, exclude_user_id: int | None = None) -> None:
         await self._notify_admins(messages.BOOKMARK_WATCH_STARTED, exclude_user_id=exclude_user_id)

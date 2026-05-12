@@ -15,6 +15,7 @@ from .http_api import run_http_api
 from .safety import create_image_safety_detector
 from .service import ArchiveBot
 from .twitter_bookmarks import TwitterBookmarkMonitor, XBookmarksClient, XOAuth2TokenRefresher
+from .web_bookmarks import BookmarkMonitorGroup, PixivBookmarksClient, PoipikuBookmarksClient
 
 
 class TelegramBotClient:
@@ -168,8 +169,8 @@ async def main() -> None:
     await application.updater.start_polling()
 
     runner = None
-    bookmark_task = None
-    bookmark_monitor = None
+    bookmark_tasks: list[asyncio.Task] = []
+    bookmark_monitors: list[TwitterBookmarkMonitor] = []
     if config.http_api_enabled:
         runner = await run_http_api(archive_bot, config.http_api_host, config.http_api_port)
         logging.info("HTTP API listening on %s:%s", config.http_api_host, config.http_api_port)
@@ -187,10 +188,52 @@ async def main() -> None:
             archive_bot=archive_bot,
             client=bookmark_client,
         )
-        archive_bot.bookmark_monitor = bookmark_monitor
-        bookmark_task = asyncio.create_task(bookmark_monitor.run_forever())
-        if config.twitter_bookmarks_enabled:
-            bookmark_monitor.activate()
+        bookmark_monitors.append(bookmark_monitor)
+    if config.pixiv_bookmarks_user_id and config.pixiv_bookmarks_cookies:
+        pixiv_client = PixivBookmarksClient(
+            user_id=config.pixiv_bookmarks_user_id,
+            cookies_path=config.pixiv_bookmarks_cookies,
+            max_results=config.web_bookmarks_max_results,
+        )
+        bookmark_monitors.append(
+            TwitterBookmarkMonitor(
+                config=config,
+                db=db,
+                archive_bot=archive_bot,
+                client=pixiv_client,
+                provider="pixiv",
+                label="Pixiv",
+                configured=lambda: bool(
+                    config.pixiv_bookmarks_user_id
+                    and config.pixiv_bookmarks_cookies
+                    and config.pixiv_bookmarks_cookies.exists()
+                ),
+            )
+        )
+    if config.poipiku_bookmarks_cookies:
+        poipiku_client = PoipikuBookmarksClient(
+            cookies_path=config.poipiku_bookmarks_cookies,
+            max_results=config.web_bookmarks_max_results,
+        )
+        bookmark_monitors.append(
+            TwitterBookmarkMonitor(
+                config=config,
+                db=db,
+                archive_bot=archive_bot,
+                client=poipiku_client,
+                provider="poipiku",
+                label="Poipiku",
+                configured=lambda: bool(
+                    config.poipiku_bookmarks_cookies
+                    and config.poipiku_bookmarks_cookies.exists()
+                ),
+            )
+        )
+    if bookmark_monitors:
+        archive_bot.bookmark_monitor = BookmarkMonitorGroup(tuple(bookmark_monitors))
+        bookmark_tasks = [asyncio.create_task(monitor.run_forever()) for monitor in bookmark_monitors]
+        if config.bookmarks_enabled or config.twitter_bookmarks_enabled:
+            archive_bot.bookmark_monitor.activate()
             await archive_bot.notify_bookmark_watch_started()
     logging.info("Bot started successfully!")
 
@@ -198,8 +241,9 @@ async def main() -> None:
         while True:
             await asyncio.sleep(3600)
     finally:
-        if bookmark_task:
+        for bookmark_task in bookmark_tasks:
             bookmark_task.cancel()
+        for bookmark_task in bookmark_tasks:
             try:
                 await bookmark_task
             except asyncio.CancelledError:

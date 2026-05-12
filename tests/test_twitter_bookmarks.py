@@ -58,7 +58,7 @@ def monitor_for(service, db, client, clock):
 
 
 @pytest.mark.asyncio
-async def test_bookmark_monitor_initial_poll_baselines_without_submission(app_factory):
+async def test_bookmark_monitor_initial_poll_queues_existing_bookmarks(app_factory):
     service, db, bot, downloader = app_factory()
     clock = FakeClock()
     client = FakeBookmarkClient([[BookmarkPost("1", "https://twitter.com/i/status/1")]])
@@ -69,7 +69,24 @@ async def test_bookmark_monitor_initial_poll_baselines_without_submission(app_fa
     assert downloader.calls == []
     assert bot.calls == []
     assert db.bookmark_item_count() == 1
-    assert db.active_bookmark_items()[0].status == "baseline"
+    assert db.active_bookmark_items()[0].status == "pending"
+
+
+@pytest.mark.asyncio
+async def test_existing_bookmark_from_activation_submits_after_grace(app_factory, sample_media):
+    url = "https://twitter.com/i/status/101"
+    service, db, bot, downloader = app_factory({url: ([sample_media["jpg"]], {"canonical_url": url})})
+    clock = FakeClock()
+    client = FakeBookmarkClient([[BookmarkPost("101", url)], [BookmarkPost("101", url)]])
+    monitor = monitor_for(service, db, client, clock)
+
+    await monitor.poll_once()
+    clock.advance(10)
+    await monitor.poll_once()
+
+    assert downloader.calls == [url]
+    assert db.get_submission(1).url == url
+    assert db.pending_bookmark_items() == []
 
 
 @pytest.mark.asyncio
