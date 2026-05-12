@@ -43,6 +43,9 @@ class BotClient(Protocol):
     async def send_media_group(self, chat_id: int | str, media: list[dict[str, Any]]) -> Any:
         ...
 
+    async def delete_message(self, chat_id: int | str, message_id: int) -> Any:
+        ...
+
 
 class BookmarkActivator(Protocol):
     def is_configured(self) -> bool:
@@ -240,20 +243,56 @@ class ArchiveBot:
             return False
         if origin.chat is None or origin.message_id is None:
             return False
-        forward_chat_id = origin.chat.id
-        channel_ids = [self.config.publish_channel_id]
-        if self.config.r18_routing_enabled and self.config.r18_channel_id:
-            channel_ids.append(self.config.r18_channel_id)
-        if any(is_forward_from_channel(origin.chat, channel_id) for channel_id in channel_ids):
+        source_channel = self.forward_source_channel(origin.chat)
+        if source_channel:
             submission = self.db.find_by_message_id(origin.message_id)
             if not submission:
                 return False
-            await self.return_original_submission(update.message, submission)
+            allow_relocate = update.effective_user.id in self.config.admin_ids
+            await self.return_original_submission(
+                update.message,
+                submission,
+                relocate_source=source_channel if allow_relocate else None,
+            )
             return True
         return False
 
-    async def return_original_submission(self, message: Any, submission: Submission) -> None:
-        await message.reply_text(messages.original_found(submission.url))
+    def forward_source_channel(self, chat: Any) -> str | None:
+        for channel_id in self.publish_channel_ids():
+            if is_forward_from_channel(chat, channel_id):
+                return channel_id
+        return None
+
+    def publish_channel_ids(self) -> list[str]:
+        channel_ids = [self.config.publish_channel_id]
+        if self.config.r18_routing_enabled and self.config.r18_channel_id:
+            channel_ids.append(self.config.r18_channel_id)
+        return channel_ids
+
+    async def return_original_submission(
+        self,
+        message: Any,
+        submission: Submission,
+        relocate_source: str | None = None,
+    ) -> None:
+        kwargs: dict[str, Any] = {}
+        if relocate_source:
+            source_key = "r18" if relocate_source == self.config.r18_channel_id else "safe"
+            kwargs["reply_markup"] = {
+                "inline_keyboard": [
+                    [
+                        {
+                            "text": messages.MOVE_TO_R18_BUTTON,
+                            "callback_data": f"move_r18:{submission.id}:{source_key}",
+                        },
+                        {
+                            "text": messages.MOVE_TO_SAFE_BUTTON,
+                            "callback_data": f"move_safe:{submission.id}:{source_key}",
+                        },
+                    ]
+                ]
+            }
+        await message.reply_text(messages.original_found(submission.url), **kwargs)
         for media_path in submission.media_paths:
             if os.path.exists(media_path):
                 await message.reply_document(document=media_path, filename=os.path.basename(media_path))
@@ -385,11 +424,17 @@ class ArchiveBot:
         if user_id not in self.config.admin_ids:
             await query.edit_message_caption(caption=messages.callback_no_permission(existing_caption))
             return
-        action, submission_id_text = query.data.split(":")
+        parts = query.data.split(":")
+        action, submission_id_text = parts[0], parts[1]
         submission_id = int(submission_id_text)
         submission = self.db.get_submission(submission_id)
         if not submission:
             await query.edit_message_caption(caption=messages.callback_not_found(existing_caption))
+            return
+        if action in {"move_r18", "move_safe"}:
+            source_key = parts[2] if len(parts) > 2 else ""
+            await self.move_published_submission(submission, action, source_key, user_id)
+            await edit_callback_message(query, messages.callback_approved(existing_caption, username))
             return
         if submission.status != "pending":
             await query.edit_message_caption(caption=messages.callback_already_done(existing_caption, submission.status))
@@ -526,6 +571,34 @@ class ArchiveBot:
             except Exception as exc:
                 logging.warning("无法通知管理员 %s: %s", admin, exc)
 
+    async def move_published_submission(
+        self,
+        submission: Submission,
+        action: str,
+        source_key: str,
+        reviewer_id: int,
+    ) -> None:
+        if not submission.message_id:
+            raise RuntimeError(f"Submission #{submission.id} has no channel message id")
+        source_channel = self.source_channel_from_key(source_key) or self.publish_channel_for_submission(submission)
+        metadata = submission_metadata(submission)
+        if action == "move_r18":
+            metadata["safety_rating"] = "r18"
+            metadata["safety_reason"] = "admin moved to r18 channel"
+        else:
+            metadata["safety_rating"] = "safe"
+            metadata["safety_reason"] = "admin moved to safe channel"
+        await self.bot.delete_message(source_channel, int(submission.message_id))
+        self.db.update_metadata(submission.id, metadata, self.clock.now())
+        await self.publish_submission(submission.id, reviewer_id)
+
+    def source_channel_from_key(self, source_key: str) -> str | None:
+        if source_key == "r18" and self.config.r18_channel_id:
+            return self.config.r18_channel_id
+        if source_key == "safe":
+            return self.config.publish_channel_id
+        return None
+
     def find_existing_submission_from_metadata(self, url: str, metadata: dict[str, Any]) -> Submission | None:
         for candidate in (metadata.get("canonical_url"), url):
             if not candidate:
@@ -603,6 +676,13 @@ def api_duplicate_result(existing: Submission) -> SubmitResult:
             "current_status": existing.status,
         },
     )
+
+
+async def edit_callback_message(query: Any, text: str) -> None:
+    if hasattr(query, "edit_message_text"):
+        await query.edit_message_text(text=text)
+        return
+    await query.edit_message_caption(caption=text)
 
 
 def submission_metadata(submission: Submission) -> dict[str, Any]:

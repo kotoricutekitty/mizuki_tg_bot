@@ -36,6 +36,8 @@ BOOKMARK_WATCH_FORBIDDEN = "呜喵...你没有权限做这个操作喵😾"
 
 APPROVE_BUTTON = "✅ 通过"
 REJECT_BUTTON = "❌ 拒绝"
+MOVE_TO_R18_BUTTON = "转到色图频道"
+MOVE_TO_SAFE_BUTTON = "转到不色频道"
 
 
 def set_success(key: str, value: str) -> str:

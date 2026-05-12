@@ -81,6 +81,7 @@ class FakeCallbackQuery:
     message: FakeSentMessage
     answered: bool = False
     edited_caption: str | None = None
+    edited_text: str | None = None
 
     async def answer(self) -> None:
         self.answered = True
@@ -88,6 +89,10 @@ class FakeCallbackQuery:
     async def edit_message_caption(self, caption: str, **kwargs: Any) -> None:
         self.edited_caption = caption
         self.message.caption = caption
+
+    async def edit_message_text(self, text: str, **kwargs: Any) -> None:
+        self.edited_text = text
+        self.message.caption = text
 
 
 class FakeBot:
@@ -118,6 +123,10 @@ class FakeBot:
     async def send_media_group(self, chat_id: int | str, media: list[dict[str, Any]]) -> list[FakeSentMessage]:
         self.calls.append({"method": "send_media_group", "chat_id": chat_id, "media": media})
         return [self._next(item.get("caption", "")) for item in media]
+
+    async def delete_message(self, chat_id: int | str, message_id: int) -> bool:
+        self.calls.append({"method": "delete_message", "chat_id": chat_id, "message_id": message_id})
+        return True
 
 
 class FakeDownloader:

@@ -57,6 +57,9 @@ class TelegramBotClient:
                 if hasattr(fh, "close"):
                     fh.close()
 
+    async def delete_message(self, chat_id: int | str, message_id: int) -> Any:
+        return await self.bot.delete_message(chat_id=chat_id, message_id=message_id)
+
 
 def open_if_path(value: Any) -> Any:
     if isinstance(value, (str, Path)) and Path(value).exists():
