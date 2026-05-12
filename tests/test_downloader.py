@@ -19,3 +19,26 @@ def test_poipiku_placeholder_is_filtered(tmp_path: Path, monkeypatch):
     assert downloader.is_poipiku_placeholder(placeholder)
     assert not downloader.is_poipiku_placeholder(real)
     assert downloader.filter_poipiku_placeholders([str(placeholder), str(real)]) == [str(real)]
+
+
+def test_extract_poipiku_append_image_urls():
+    html = """
+    <img src="https://cdn.poipiku.com/a/b.png_640.jpg">
+    <img src="https://cdn.poipiku.com/a/b.png_640.jpg">
+    <img src="https://cdn.poipiku.com/assets/emoji/1f496.png">
+    """
+
+    assert downloader.extract_poipiku_append_image_urls(html) == [
+        "https://cdn.poipiku.com/a/b.png_640.jpg",
+    ]
+
+
+def test_load_cookie_header_reads_netscape_cookie_file(tmp_path: Path):
+    cookie_file = tmp_path / "cookies.txt"
+    cookie_file.write_text(
+        "# Netscape HTTP Cookie File\n"
+        "poipiku.com\tTRUE\t/\tTRUE\t1813129665\tPOIPIKU_LK\tsecret\n",
+        encoding="utf-8",
+    )
+
+    assert downloader.load_cookie_header(cookie_file) == "POIPIKU_LK=secret"

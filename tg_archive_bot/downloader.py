@@ -9,9 +9,11 @@ import re
 import shutil
 import subprocess
 import urllib.error
+import urllib.parse
 import urllib.request
 import zipfile
 from datetime import datetime
+from html import unescape
 from pathlib import Path
 from typing import Protocol
 
@@ -26,8 +28,9 @@ class Downloader(Protocol):
 
 
 class GalleryDownloader:
-    def __init__(self, media_dir: Path):
+    def __init__(self, media_dir: Path, cookies_path: Path | None = None):
         self.media_dir = media_dir
+        self.cookies_path = cookies_path
 
     async def download_media(self, url: str) -> tuple[list[str], dict]:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -76,12 +79,17 @@ class GalleryDownloader:
 
     async def _download_gallery_dl(self, url: str, output_dir: Path, metadata: dict) -> tuple[list[str], dict]:
         try:
-            proc = await asyncio.create_subprocess_exec(
+            command = [
                 "gallery-dl",
                 "-d",
                 str(output_dir),
                 "--write-metadata",
-                url,
+            ]
+            if self.cookies_path and self.cookies_path.exists():
+                command.extend(["--cookies", str(self.cookies_path)])
+            command.append(url)
+            proc = await asyncio.create_subprocess_exec(
+                *command,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
             )
@@ -104,12 +112,34 @@ class GalleryDownloader:
                         media_files.append(str(converted or file_path))
             if "poipiku.com" in url:
                 media_files = filter_poipiku_placeholders(media_files)
+                if not media_files:
+                    media_files = await self._download_poipiku_append_files(url, output_dir)
             if metadata and "canonical_url" not in metadata:
                 metadata["canonical_url"] = url
             return media_files, metadata
         except Exception as exc:
             logging.error("Download error for %s: %s", url, exc)
             return [], metadata
+
+    async def _download_poipiku_append_files(self, url: str, output_dir: Path) -> list[str]:
+        if not self.cookies_path or not self.cookies_path.exists():
+            return []
+        match = re.search(r"poipiku\.com/(\d+)/(\d+)\.html", url)
+        if not match:
+            return []
+        user_id, post_id = match.groups()
+        try:
+            return await asyncio.to_thread(
+                download_poipiku_append_files,
+                url,
+                user_id,
+                post_id,
+                self.cookies_path,
+                output_dir,
+            )
+        except Exception as exc:
+            logging.error("Poipiku fallback download failed for %s: %s", url, exc)
+            return []
 
     def _merge_metadata(self, file_path: Path, url: str, metadata: dict) -> None:
         try:
@@ -198,6 +228,135 @@ def download_url(url: str, filepath: Path) -> None:
             filepath.write_bytes(response.read())
     except urllib.error.HTTPError as exc:
         raise RuntimeError(f"download failed: {exc.code}") from exc
+
+
+def download_poipiku_append_files(
+    page_url: str,
+    user_id: str,
+    post_id: str,
+    cookies_path: Path,
+    output_dir: Path,
+) -> list[str]:
+    cookie_header = load_cookie_header(cookies_path)
+    if not cookie_header:
+        return []
+    media_urls: list[str] = []
+    for mode in ("0", "1"):
+        response = post_poipiku_append_request(page_url, user_id, post_id, mode, cookie_header)
+        html = str(response.get("html") or "")
+        media_urls.extend(extract_poipiku_append_image_urls(html))
+        if media_urls:
+            break
+        logging.warning("Poipiku fallback returned no media: result=%s html=%s", response.get("result_num"), html[:120])
+    saved_files: list[str] = []
+    fallback_dir = output_dir / "poipiku_fallback" / user_id
+    fallback_dir.mkdir(parents=True, exist_ok=True)
+    for index, media_url in enumerate(dedupe(media_urls), start=1):
+        suffix = suffix_for_url(media_url)
+        file_path = fallback_dir / f"{post_id}_{index}{suffix}"
+        download_binary(media_url, file_path, referer=page_url)
+        if file_path.stat().st_size <= 0 or is_poipiku_placeholder(file_path):
+            file_path.unlink(missing_ok=True)
+            continue
+        saved_files.append(str(file_path))
+        logging.info("Poipiku fallback downloaded: %s", file_path.name)
+    return saved_files
+
+
+def post_poipiku_append_request(
+    page_url: str,
+    user_id: str,
+    post_id: str,
+    mode: str,
+    cookie_header: str,
+) -> dict:
+    data = urllib.parse.urlencode(
+        {
+            "UID": user_id,
+            "IID": post_id,
+            "PAS": "",
+            "MD": mode,
+            "TWF": "-1",
+        }
+    ).encode()
+    req = urllib.request.Request(
+        "https://poipiku.com/f/ShowAppendFileF.jsp",
+        data=data,
+        headers={
+            "User-Agent": "Mozilla/5.0",
+            "Referer": page_url,
+            "X-Requested-With": "XMLHttpRequest",
+            "Cookie": cookie_header,
+        },
+    )
+    with urllib.request.urlopen(req, timeout=30) as response:
+        return json.loads(response.read().decode("utf-8"))
+
+
+def extract_poipiku_append_image_urls(html: str) -> list[str]:
+    urls = re.findall(r"https://cdn\.poipiku\.com[^\"' <)]+", unescape(html))
+    media_urls: list[str] = []
+    for url in urls:
+        lowered = url.lower()
+        if "/assets/" in lowered:
+            continue
+        if not any(ext in lowered for ext in (".jpg", ".jpeg", ".png", ".gif", ".webp")):
+            continue
+        media_urls.append(url)
+    return dedupe(media_urls)
+
+
+def load_cookie_header(cookies_path: Path) -> str:
+    parts: list[str] = []
+    try:
+        lines = cookies_path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return ""
+    for line in lines:
+        if not line or line.startswith("#"):
+            continue
+        fields = line.split("\t")
+        if len(fields) >= 7:
+            parts.append(f"{fields[5]}={fields[6]}")
+            continue
+        if "=" in line:
+            parts.append(line.strip())
+    return "; ".join(parts)
+
+
+def download_binary(url: str, filepath: Path, referer: str | None = None) -> None:
+    headers = {"User-Agent": "Mozilla/5.0"}
+    if referer:
+        headers["Referer"] = referer
+    req = urllib.request.Request(url, headers=headers)
+    try:
+        with urllib.request.urlopen(req, timeout=60) as response:
+            content_type = response.headers.get("content-type", "")
+            data = response.read()
+    except urllib.error.HTTPError as exc:
+        raise RuntimeError(f"download failed: {exc.code}") from exc
+    if content_type and not content_type.startswith("image/"):
+        raise RuntimeError(f"download returned non-image content: {content_type}")
+    filepath.write_bytes(data)
+
+
+def suffix_for_url(url: str) -> str:
+    filename = url.split("?", 1)[0].rsplit("/", 1)[-1].lower()
+    for suffix in (".jpg", ".jpeg", ".png", ".gif", ".webp"):
+        if suffix in filename:
+            return suffix
+    return ".jpg"
+
+
+def dedupe(values: list[str]) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for value in values:
+        if value in seen:
+            continue
+        seen.add(value)
+        result.append(value)
+    return result
 
 
 def filter_poipiku_placeholders(media_files: list[str]) -> list[str]:

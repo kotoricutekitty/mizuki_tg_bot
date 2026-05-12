@@ -38,6 +38,7 @@ class BotConfig:
     twitter_bookmarks_idle_seconds: float = 5 * 60.0
     twitter_bookmarks_max_results: int = 10
     twitter_bookmarks_api_base: str = "https://api.x.com"
+    gallery_dl_cookies: Path | None = None
 
     @classmethod
     def from_env(cls, base_dir: Path | None = None) -> "BotConfig":
@@ -76,6 +77,7 @@ class BotConfig:
             twitter_bookmarks_idle_seconds=float(os.getenv("TWITTER_BOOKMARKS_IDLE_SECONDS", str(5 * 60))),
             twitter_bookmarks_max_results=int(os.getenv("TWITTER_BOOKMARKS_MAX_RESULTS", "10")),
             twitter_bookmarks_api_base=os.getenv("TWITTER_BOOKMARKS_API_BASE", "https://api.x.com"),
+            gallery_dl_cookies=parse_optional_path(os.getenv("GALLERY_DL_COOKIES") or os.getenv("POIPIKU_COOKIES")),
         )
 
     def validate_runtime(self) -> None:
@@ -115,3 +117,9 @@ def parse_admin_ids(value: str) -> tuple[int, ...]:
 
 def parse_bool(value: str) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def parse_optional_path(value: str | None) -> Path | None:
+    if not value:
+        return None
+    return Path(value)
