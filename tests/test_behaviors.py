@@ -634,6 +634,30 @@ async def test_publish_large_images_compresses_channel_media(app_factory, tmp_pa
 
 
 @pytest.mark.asyncio
+async def test_publish_single_large_image_compresses_photo_payload(app_factory, tmp_path, monkeypatch):
+    large = make_image(tmp_path / "large-single" / "large.jpg")
+    monkeypatch.setattr("tg_archive_bot.service.MAX_PHOTO_SIZE", 1)
+    service, db, bot, _ = app_factory()
+    sub_id = db.create_submission(
+        user_id=1,
+        username="admin",
+        url="https://www.pixiv.net/artworks/140405505",
+        status="approved",
+        media_paths=[large],
+        metadata={"canonical_url": "https://www.pixiv.net/artworks/140405505"},
+        now=service.clock.now(),
+    )
+
+    await service.publish_submission(sub_id, 1)
+
+    sent = bot.calls[0]
+    assert sent["method"] == "send_photo"
+    assert sent["photo"] != large
+    assert hasattr(sent["photo"], "read")
+    assert db.get_submission(sub_id).media_paths == [large]
+
+
+@pytest.mark.asyncio
 async def test_publish_two_to_ten_images_uses_media_group(app_factory, sample_media):
     service, db, bot, _ = app_factory()
     sub_id = db.create_submission(

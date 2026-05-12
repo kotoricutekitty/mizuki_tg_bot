@@ -213,7 +213,7 @@ class ArchiveBot:
         summary = messages.submission_summary(submission, submission_metadata(submission))
         preview = first_existing_photo(submission.media_paths)
         if preview:
-            await self.bot.send_photo(chat_id=update.effective_user.id, photo=preview, caption=summary)
+            await self.bot.send_photo(chat_id=update.effective_user.id, photo=preview_media_value(preview), caption=summary)
         else:
             await update.message.reply_text(summary)
 
@@ -570,7 +570,7 @@ class ArchiveBot:
                 if preview:
                     await self.bot.send_photo(
                         chat_id=admin_id,
-                        photo=preview,
+                        photo=preview_media_value(preview),
                         caption=caption,
                         reply_markup=reply_markup,
                     )
@@ -602,11 +602,8 @@ class ArchiveBot:
         if parse_mode is not None:
             kwargs["parse_mode"] = parse_mode
         if kind == "photo":
-            if file_size <= MAX_PHOTO_SIZE:
-                sent = await self.bot.send_photo(chat_id=chat_id, photo=file_path, **kwargs)
-                self.note_preview_message(chat_id, file_path)
-                return sent
-            sent = await self.bot.send_photo(chat_id=chat_id, photo=file_path, **kwargs)
+            photo = file_path if file_size <= MAX_PHOTO_SIZE else preview_media_value(file_path)
+            sent = await self.bot.send_photo(chat_id=chat_id, photo=photo, **kwargs)
             self.note_preview_message(chat_id, file_path)
             return sent
         if kind == "video":
@@ -786,7 +783,7 @@ class ArchiveBot:
     async def send_submission_message(self, chat_id: int | str, submission: Submission, text: str, **kwargs: Any) -> Any:
         preview = first_existing_photo(submission.media_paths)
         if preview and self.should_send_preview(chat_id, preview):
-            sent = await self.bot.send_photo(chat_id=chat_id, photo=preview, caption=text, **kwargs)
+            sent = await self.bot.send_photo(chat_id=chat_id, photo=preview_media_value(preview), caption=text, **kwargs)
             self.note_preview_message(chat_id, preview)
             return sent
         sent = await self.bot.send_message(chat_id, text, **kwargs)
@@ -1040,6 +1037,14 @@ def publish_media_value(file_path: str) -> Any:
     if os.path.getsize(file_path) <= MAX_PUBLISH_PHOTO_SIZE:
         return file_path
     compressed = compress_image(file_path, max_size=MAX_PUBLISH_PHOTO_SIZE)
+    compressed.name = Path(file_path).with_suffix(".jpg").name
+    return compressed
+
+
+def preview_media_value(file_path: str) -> Any:
+    if os.path.getsize(file_path) <= MAX_PHOTO_SIZE:
+        return file_path
+    compressed = compress_image(file_path, max_size=MAX_PHOTO_SIZE)
     compressed.name = Path(file_path).with_suffix(".jpg").name
     return compressed
 
