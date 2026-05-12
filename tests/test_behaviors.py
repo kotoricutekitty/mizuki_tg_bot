@@ -107,7 +107,7 @@ async def test_download_failed_dialog(app_factory):
 
 @pytest.mark.asyncio
 async def test_pending_command_lists_and_empty_state(app_factory, sample_media):
-    service, db, _, _ = app_factory()
+    service, db, bot, _ = app_factory()
     empty = FakeMessage()
     await service.pending_command(FakeUpdate(FakeUser(1, "admin"), message=empty))
     assert empty.replies[0]["text"] == messages.NO_PENDING
@@ -123,7 +123,13 @@ async def test_pending_command_lists_and_empty_state(app_factory, sample_media):
     )
     listed = FakeMessage()
     await service.pending_command(FakeUpdate(FakeUser(1, "admin"), message=listed))
-    assert listed.replies[0]["text"] == "📝 待审核列表喵：\n#1 - normal (2) - https://twitter.com/u/status/44\n"
+    assert listed.replies[0]["text"] == "📝 待审核列表喵：\n"
+    assert bot.calls[-1]["method"] == "send_photo"
+    assert bot.calls[-1]["chat_id"] == 1
+    assert bot.calls[-1]["photo"] == sample_media["jpg"]
+    assert bot.calls[-1]["caption"] == "#1 - normal (2) - https://twitter.com/u/status/44"
+    assert bot.calls[-1]["reply_markup"]["inline_keyboard"][0][0]["text"] == messages.APPROVE_BUTTON
+    assert bot.calls[-1]["reply_markup"]["inline_keyboard"][0][1]["text"] == messages.REJECT_BUTTON
 
 
 @pytest.mark.asyncio
@@ -296,7 +302,7 @@ async def test_review_approve(app_factory, sample_media):
     assert query.answered
     assert query.edited_caption == "review\n\n✅ 已经通过啦喵 by @admin"
     assert db.get_submission(sub_id).status == "approved"
-    assert any(call["method"] == "send_message" and call["chat_id"] == 2 for call in bot.calls)
+    assert any(call["method"] == "send_photo" and call["chat_id"] == 2 for call in bot.calls)
 
 
 @pytest.mark.asyncio
@@ -307,7 +313,8 @@ async def test_review_reject(app_factory, sample_media):
     await service.handle_callback(FakeUpdate(FakeUser(1, "admin"), callback_query=query))
     assert query.edited_caption == "review\n\n❌ 已经被拒绝啦喵 by @admin"
     assert db.get_submission(sub_id).status == "rejected"
-    assert bot.calls[-1]["text"] == messages.submitter_rejected("https://twitter.com/u/status/2")
+    assert bot.calls[-1]["caption"] == messages.submitter_rejected("https://twitter.com/u/status/2")
+    assert bot.calls[-1]["photo"] == sample_media["jpg"]
 
 
 @pytest.mark.asyncio
@@ -632,7 +639,7 @@ async def test_http_api_submit_without_tg(app_factory, sample_media):
     assert result.status == 200
     assert result.body["status"] == "success"
     assert db.get_submission(result.body["submission_id"]).status == "approved"
-    assert any(call["method"] == "send_message" and call["chat_id"] == 1 for call in bot.calls)
+    assert any(call["method"] == "send_photo" and call["chat_id"] == 1 for call in bot.calls)
 
 
 @pytest.mark.asyncio

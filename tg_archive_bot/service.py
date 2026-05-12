@@ -126,10 +126,19 @@ class ArchiveBot:
         if not pending:
             await update.message.reply_text(messages.NO_PENDING)
             return
-        text = messages.pending_header()
+        await update.message.reply_text(messages.pending_header())
         for sub in pending:
-            text += f"#{sub.id} - {sub.username} ({sub.user_id}) - {sub.url}\n"
-        await update.message.reply_text(text)
+            text = f"#{sub.id} - {sub.username} ({sub.user_id}) - {sub.url}"
+            await self.send_submission_message(
+                update.effective_user.id,
+                sub,
+                text,
+                reply_markup=review_reply_markup(
+                    sub.id,
+                    submission_metadata(sub),
+                    include_r18=bool(self.config.r18_routing_enabled and self.config.r18_channel_id),
+                ),
+            )
 
     async def pixiv_status_command(self, update: Any, context: Any = None) -> None:
         if update.effective_user.id not in self.config.admin_ids:
@@ -427,17 +436,11 @@ class ArchiveBot:
                 logging.warning("原图不存在: %s", media_path)
 
     async def send_to_review(self, submission_id: int, url: str, username: str, media_files: list[str], metadata: dict) -> Any | None:
-        buttons = [
-            {"text": messages.APPROVE_BUTTON, "callback_data": f"approve:{submission_id}"},
-            {"text": messages.REJECT_BUTTON, "callback_data": f"reject:{submission_id}"},
-        ]
-        if metadata.get("safety_rating") == "uncertain" and self.config.r18_routing_enabled and self.config.r18_channel_id:
-            buttons.insert(1, {"text": "🔞 R-18", "callback_data": f"approve_r18:{submission_id}"})
-        reply_markup = {
-            "inline_keyboard": [
-                buttons
-            ]
-        }
+        reply_markup = review_reply_markup(
+            submission_id,
+            metadata,
+            include_r18=bool(self.config.r18_routing_enabled and self.config.r18_channel_id),
+        )
         text = messages.review_caption(submission_id, username, url, metadata)
         sent_messages: list[Any] = []
         for admin_id in self.config.admin_ids:
@@ -626,21 +629,21 @@ class ArchiveBot:
             await self.publish_submission(submission_id, user_id)
             await query.edit_message_caption(caption=messages.callback_approved(existing_caption, username))
             try:
-                await self.bot.send_message(submission.user_id, messages.submitter_approved(submission.url))
+                await self.send_submission_message(submission.user_id, submission, messages.submitter_approved(submission.url))
             except Exception as exc:
                 logging.warning("无法通知投稿者 %s: %s", submission.user_id, exc)
         elif action == "approve":
             await self.publish_submission(submission_id, user_id)
             await query.edit_message_caption(caption=messages.callback_approved(existing_caption, username))
             try:
-                await self.bot.send_message(submission.user_id, messages.submitter_approved(submission.url))
+                await self.send_submission_message(submission.user_id, submission, messages.submitter_approved(submission.url))
             except Exception as exc:
                 logging.warning("无法通知投稿者 %s: %s", submission.user_id, exc)
         elif action == "reject":
             self.db.update_status(submission_id, "rejected", user_id, self.clock.now())
             await query.edit_message_caption(caption=messages.callback_rejected(existing_caption, username))
             try:
-                await self.bot.send_message(submission.user_id, messages.submitter_rejected(submission.url))
+                await self.send_submission_message(submission.user_id, submission, messages.submitter_rejected(submission.url))
             except Exception as exc:
                 logging.warning("无法通知投稿者 %s: %s", submission.user_id, exc)
 
@@ -744,11 +747,22 @@ class ArchiveBot:
         return "submitted", submission_id
 
     async def notify_api_submission(self, submission_id: int, normalized_url: str, metadata: dict[str, Any]) -> None:
+        submission = self.db.get_submission(submission_id)
         for admin in self.config.admin_ids:
             try:
-                await self.bot.send_message(admin, messages.api_notify(submission_id, normalized_url, metadata))
+                text = messages.api_notify(submission_id, normalized_url, metadata)
+                if submission:
+                    await self.send_submission_message(admin, submission, text)
+                else:
+                    await self.bot.send_message(admin, text)
             except Exception as exc:
                 logging.warning("无法通知管理员 %s: %s", admin, exc)
+
+    async def send_submission_message(self, chat_id: int | str, submission: Submission, text: str, **kwargs: Any) -> Any:
+        preview = first_existing_photo(submission.media_paths)
+        if preview:
+            return await self.bot.send_photo(chat_id=chat_id, photo=preview, caption=text, **kwargs)
+        return await self.bot.send_message(chat_id, text, **kwargs)
 
     async def move_published_submission(
         self,
@@ -985,6 +999,16 @@ def moderation_reply_markup(submission_id: int, source_key: str) -> dict[str, An
             ]
         ]
     }
+
+
+def review_reply_markup(submission_id: int, metadata: dict[str, Any], include_r18: bool = False) -> dict[str, Any]:
+    buttons = [
+        {"text": messages.APPROVE_BUTTON, "callback_data": f"approve:{submission_id}"},
+        {"text": messages.REJECT_BUTTON, "callback_data": f"reject:{submission_id}"},
+    ]
+    if metadata.get("safety_rating") == "uncertain" and include_r18:
+        buttons.insert(1, {"text": "🔞 R-18", "callback_data": f"approve_r18:{submission_id}"})
+    return {"inline_keyboard": [buttons]}
 
 
 def first_existing_photo(media_files: list[str]) -> str | None:
