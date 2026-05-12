@@ -118,6 +118,7 @@ async def main() -> None:
     application.add_handler(CommandHandler("set", archive_bot.set_command))
     application.add_handler(CommandHandler("pending", archive_bot.pending_command))
     application.add_handler(CommandHandler("pixiv_status", archive_bot.pixiv_status_command))
+    application.add_handler(CommandHandler("bookmark_watch", archive_bot.bookmark_watch_command))
     application.add_handler(MessageHandler(~filters.COMMAND, archive_bot.handle_message))
     application.add_handler(CallbackQueryHandler(archive_bot.handle_callback))
 
@@ -127,14 +128,16 @@ async def main() -> None:
 
     runner = None
     bookmark_task = None
+    bookmark_monitor = None
     if config.http_api_enabled:
         runner = await run_http_api(archive_bot, config.http_api_host, config.http_api_port)
         logging.info("HTTP API listening on %s:%s", config.http_api_host, config.http_api_port)
-    if config.twitter_bookmarks_enabled:
+    if config.twitter_bookmarks_user_id and config.twitter_bookmarks_access_token:
         bookmark_client = XBookmarksClient(
             api_base=config.twitter_bookmarks_api_base,
             user_id=config.twitter_bookmarks_user_id,
             access_token=config.twitter_bookmarks_access_token,
+            max_results=config.twitter_bookmarks_max_results,
         )
         bookmark_monitor = TwitterBookmarkMonitor(
             config=config,
@@ -142,7 +145,10 @@ async def main() -> None:
             archive_bot=archive_bot,
             client=bookmark_client,
         )
+        archive_bot.bookmark_monitor = bookmark_monitor
         bookmark_task = asyncio.create_task(bookmark_monitor.run_forever())
+        if config.twitter_bookmarks_enabled:
+            bookmark_monitor.activate()
     logging.info("Bot started successfully!")
 
     try:

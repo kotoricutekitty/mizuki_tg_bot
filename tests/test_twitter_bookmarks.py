@@ -3,7 +3,10 @@ from __future__ import annotations
 import pytest
 
 from tests.fakes import FakeBookmarkClient, FakeClock
+from tests.fakes import FakeMessage, FakeUpdate, FakeUser
 from tg_archive_bot.config import BotConfig
+from tg_archive_bot import messages
+from tg_archive_bot.http_api import start_bookmarks_payload
 from tg_archive_bot.twitter_bookmarks import BookmarkPost, TwitterBookmarkMonitor
 
 
@@ -27,6 +30,8 @@ def with_bookmark_config(config: BotConfig) -> BotConfig:
         twitter_bookmarks_access_token="token",
         twitter_bookmarks_poll_seconds=5,
         twitter_bookmarks_grace_seconds=10,
+        twitter_bookmarks_idle_seconds=20 * 60,
+        twitter_bookmarks_max_results=5,
     )
 
 
@@ -131,3 +136,61 @@ async def test_bookmark_duplicate_is_marked_without_resubmitting(app_factory, sa
     assert bot.calls == []
     assert db.bookmark_item_count() == 1
     assert db.pending_bookmark_items() == []
+
+
+@pytest.mark.asyncio
+async def test_bookmark_monitor_activation_and_idle_shutdown(app_factory):
+    service, db, _, _ = app_factory()
+    clock = FakeClock()
+    client = FakeBookmarkClient([[], [], []])
+    monitor = monitor_for(service, db, client, clock)
+    assert not monitor.active
+
+    monitor.activate()
+    assert monitor.active
+    await monitor.poll_once()
+    assert monitor.active
+
+    clock.advance(20 * 60)
+    await monitor.poll_once()
+    assert not monitor.active
+
+
+@pytest.mark.asyncio
+async def test_admin_command_starts_bookmark_watch(app_factory):
+    service, db, _, _ = app_factory()
+    clock = FakeClock()
+    monitor = monitor_for(service, db, FakeBookmarkClient([[]]), clock)
+    service.bookmark_monitor = monitor
+    message = FakeMessage()
+
+    await service.bookmark_watch_command(FakeUpdate(FakeUser(1, "admin"), message=message))
+
+    assert monitor.active
+    assert message.replies[0]["text"] == messages.BOOKMARK_WATCH_STARTED
+
+
+@pytest.mark.asyncio
+async def test_bookmark_watch_command_requires_admin_and_config(app_factory):
+    service, *_ = app_factory()
+    user_message = FakeMessage()
+    await service.bookmark_watch_command(FakeUpdate(FakeUser(2, "normal"), message=user_message))
+    assert user_message.replies[0]["text"] == messages.BOOKMARK_WATCH_FORBIDDEN
+
+    admin_message = FakeMessage()
+    await service.bookmark_watch_command(FakeUpdate(FakeUser(1, "admin"), message=admin_message))
+    assert admin_message.replies[0]["text"] == messages.BOOKMARK_WATCH_UNAVAILABLE
+
+
+def test_http_bookmark_start_uses_post_token(app_factory):
+    service, db, _, _ = app_factory()
+    monitor = monitor_for(service, db, FakeBookmarkClient([[]]), FakeClock())
+    service.bookmark_monitor = monitor
+
+    unauthorized = start_bookmarks_payload(service, "wrong")
+    assert unauthorized.status == 401
+
+    started = start_bookmarks_payload(service, "api-token")
+    assert started.status == 200
+    assert started.body["status"] == "started"
+    assert monitor.active

@@ -41,6 +41,8 @@ Optional:
 | `TWITTER_BOOKMARKS_ACCESS_TOKEN` | OAuth 2.0 user access token with bookmark read scopes |
 | `TWITTER_BOOKMARKS_POLL_SECONDS` | Bookmark polling interval |
 | `TWITTER_BOOKMARKS_GRACE_SECONDS` | Stability window before a new bookmark becomes a submission |
+| `TWITTER_BOOKMARKS_IDLE_SECONDS` | Auto-stop window when no bookmark changes are seen |
+| `TWITTER_BOOKMARKS_MAX_RESULTS` | Number of recent bookmarks fetched per poll |
 
 ## Behavior Notes
 

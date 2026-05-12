@@ -26,10 +26,11 @@ class BookmarkClient(Protocol):
 
 
 class XBookmarksClient:
-    def __init__(self, *, api_base: str, user_id: str, access_token: str):
+    def __init__(self, *, api_base: str, user_id: str, access_token: str, max_results: int = 5):
         self.api_base = api_base.rstrip("/")
         self.user_id = user_id
         self.access_token = access_token
+        self.max_results = max_results
 
     async def fetch_bookmarks(self) -> list[BookmarkPost]:
         return await asyncio.to_thread(self._fetch_bookmarks_sync)
@@ -37,7 +38,7 @@ class XBookmarksClient:
     def _fetch_bookmarks_sync(self) -> list[BookmarkPost]:
         query = urllib.parse.urlencode(
             {
-                "max_results": "100",
+                "max_results": str(self.max_results),
                 "tweet.fields": "created_at,author_id",
             }
         )
@@ -73,6 +74,26 @@ class TwitterBookmarkMonitor:
         self.archive_bot = archive_bot
         self.client = client
         self.clock = clock or SystemClock()
+        self.active = False
+        self.last_activity_at: datetime | None = None
+        self.last_seen_ids: set[str] | None = None
+
+    def is_configured(self) -> bool:
+        return bool(self.config.twitter_bookmarks_user_id and self.config.twitter_bookmarks_access_token)
+
+    def activate(self) -> None:
+        if not self.is_configured():
+            raise RuntimeError("Twitter bookmark monitor is not configured")
+        now = self.clock.now()
+        self.active = True
+        self.last_activity_at = now
+        self.last_seen_ids = None
+        logging.info(
+            "Twitter bookmark monitor activated; poll=%ss grace=%ss idle=%ss",
+            self.config.twitter_bookmarks_poll_seconds,
+            self.config.twitter_bookmarks_grace_seconds,
+            self.config.twitter_bookmarks_idle_seconds,
+        )
 
     async def run_forever(self) -> None:
         logging.info(
@@ -81,6 +102,9 @@ class TwitterBookmarkMonitor:
             self.config.twitter_bookmarks_grace_seconds,
         )
         while True:
+            if not self.active:
+                await asyncio.sleep(1)
+                continue
             try:
                 await self.poll_once()
             except asyncio.CancelledError:
@@ -93,6 +117,10 @@ class TwitterBookmarkMonitor:
         posts = await self.client.fetch_bookmarks()
         now = self.clock.now()
         current_ids = {post.tweet_id for post in posts}
+        changed = self.last_seen_ids is None or current_ids != self.last_seen_ids
+        if changed:
+            self.last_activity_at = now
+        self.last_seen_ids = set(current_ids)
         is_initial_bootstrap = self.db.get_bookmark_monitor_state("bootstrapped") != "1"
         initial_status = "baseline" if is_initial_bootstrap else "pending"
 
@@ -102,6 +130,8 @@ class TwitterBookmarkMonitor:
         for item in self.db.active_bookmark_items():
             if item.tweet_id not in current_ids:
                 self.db.mark_bookmark_removed(item.tweet_id, now)
+                changed = True
+                self.last_activity_at = now
 
         if is_initial_bootstrap:
             self.db.set_bookmark_monitor_state("bootstrapped", "1")
@@ -121,10 +151,20 @@ class TwitterBookmarkMonitor:
                 )
                 if status == "duplicate":
                     self.db.mark_bookmark_duplicate(item.tweet_id, submission_id, now)
+                    changed = True
                 elif status == "submitted":
                     self.db.mark_bookmark_submitted(item.tweet_id, submission_id, now)
+                    changed = True
                 else:
                     self.db.mark_bookmark_failed(item.tweet_id, status, now)
+                    changed = True
+                if changed:
+                    self.last_activity_at = now
             except Exception as exc:
                 logging.exception("Failed to submit bookmark %s: %s", item.tweet_id, exc)
                 self.db.mark_bookmark_failed(item.tweet_id, str(exc), now)
+                self.last_activity_at = now
+
+        if self.last_activity_at and now - self.last_activity_at >= timedelta(seconds=self.config.twitter_bookmarks_idle_seconds):
+            self.active = False
+            logging.info("Twitter bookmark monitor auto-stopped after idle timeout")

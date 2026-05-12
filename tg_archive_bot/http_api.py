@@ -9,6 +9,12 @@ async def submit_payload(bot: ArchiveBot, payload: dict[str, Any], token: str | 
     return await bot.api_submit(payload.get("url"), token, client_ip)
 
 
+def start_bookmarks_payload(bot: ArchiveBot, token: str | None) -> SubmitResult:
+    if token != bot.config.post_token:
+        return SubmitResult(401, {"status": "unauthorized", "message": "无效的Token"})
+    return bot.activate_bookmark_watch()
+
+
 async def run_http_api(bot: ArchiveBot, host: str, port: int):
     from aiohttp import web
 
@@ -18,8 +24,16 @@ async def run_http_api(bot: ArchiveBot, host: str, port: int):
         result = await submit_payload(bot, payload, token, request.remote or "")
         return web.json_response(result.body, status=result.status)
 
+    async def handle_bookmarks_start(request: web.Request) -> web.Response:
+        token = request.headers.get("X-Post-Token", "")
+        result = start_bookmarks_payload(bot, token)
+        return web.json_response(result.body, status=result.status)
+
     app = web.Application()
-    app.add_routes([web.post("/submit", handle_submit)])
+    app.add_routes([
+        web.post("/submit", handle_submit),
+        web.post("/bookmarks/start", handle_bookmarks_start),
+    ])
     runner = web.AppRunner(app)
     await runner.setup()
     site = web.TCPSite(runner, host, port)

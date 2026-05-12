@@ -42,6 +42,14 @@ class BotClient(Protocol):
         ...
 
 
+class BookmarkActivator(Protocol):
+    def is_configured(self) -> bool:
+        ...
+
+    def activate(self) -> None:
+        ...
+
+
 @dataclass
 class SubmitResult:
     status: int
@@ -55,6 +63,7 @@ class ArchiveBot:
         self.downloader = downloader
         self.bot = bot
         self.clock = clock or SystemClock()
+        self.bookmark_monitor: BookmarkActivator | None = None
 
     async def start(self, update: Any, context: Any = None) -> None:
         await update.message.reply_text(messages.START_TEXT)
@@ -103,6 +112,22 @@ class ArchiveBot:
             return
         count, first_time, last_time = self.db.count_pixiv_downloads(self.config.pixiv_limit_hours)
         await update.message.reply_text(messages.pixiv_status(count, first_time, last_time))
+
+    async def bookmark_watch_command(self, update: Any, context: Any = None) -> None:
+        if update.effective_user.id not in self.config.admin_ids:
+            await update.message.reply_text(messages.BOOKMARK_WATCH_FORBIDDEN)
+            return
+        if not self.bookmark_monitor or not self.bookmark_monitor.is_configured():
+            await update.message.reply_text(messages.BOOKMARK_WATCH_UNAVAILABLE)
+            return
+        self.bookmark_monitor.activate()
+        await update.message.reply_text(messages.BOOKMARK_WATCH_STARTED)
+
+    def activate_bookmark_watch(self) -> SubmitResult:
+        if not self.bookmark_monitor or not self.bookmark_monitor.is_configured():
+            return SubmitResult(503, {"status": "unavailable", "message": "Twitter bookmark monitor is not configured"})
+        self.bookmark_monitor.activate()
+        return SubmitResult(200, {"status": "started", "message": "Twitter bookmark monitor started"})
 
     async def handle_message(self, update: Any, context: Any = None) -> None:
         if not update.message:
