@@ -67,9 +67,32 @@ async def test_batch_links_with_duplicate(app_factory, sample_media):
     message = FakeMessage(text=f"{existing_url} {new_url}")
     await service.handle_message(FakeUpdate(FakeUser(2, "normal"), message=message))
     texts = [reply["text"] for reply in message.replies]
-    assert messages.duplicate_submission(1, "approved") in texts
+    assert messages.original_found(existing_url) in texts
+    assert message.documents[0]["filename"] == Path(sample_media["jpg"]).name
     assert messages.found_links(1) in texts
     assert messages.submitted_for_review(new_url) in texts
+
+
+@pytest.mark.asyncio
+async def test_existing_link_returns_originals_without_forward(app_factory, sample_media):
+    url = "https://twitter.com/user/status/1"
+    service, db, _, downloader = app_factory()
+    db.create_submission(
+        user_id=2,
+        username="u",
+        url=url,
+        status="approved",
+        media_paths=[sample_media["jpg"]],
+        metadata={},
+        now=service.clock.now(),
+    )
+
+    message = FakeMessage(text=url)
+    await service.handle_message(FakeUpdate(FakeUser(2, "normal"), message=message))
+
+    assert downloader.calls == []
+    assert message.replies[0]["text"] == messages.original_found(url)
+    assert message.documents[0]["filename"] == Path(sample_media["jpg"]).name
 
 
 @pytest.mark.asyncio

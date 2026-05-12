@@ -170,7 +170,7 @@ class ArchiveBot:
         for url in urls:
             existing = self.db.find_by_url(url)
             if existing:
-                await update.message.reply_text(messages.duplicate_submission(existing.id, existing.status))
+                await self.return_original_submission(update.message, existing)
                 continue
             if "pixiv.net" in url:
                 count, _, _ = self.db.count_pixiv_downloads(self.config.pixiv_limit_hours)
@@ -204,7 +204,7 @@ class ArchiveBot:
             except Exception:
                 existing = self.db.find_by_url(url)
                 if existing:
-                    await update.message.reply_text(messages.duplicate_submission(existing.id, existing.status))
+                    await self.return_original_submission(update.message, existing)
                 else:
                     await update.message.reply_text(messages.duplicate_insert_failed())
                 continue
@@ -239,13 +239,16 @@ class ArchiveBot:
         submission = self.db.find_by_message_id(origin.message_id)
         if not submission:
             return False
-        await update.message.reply_text(messages.original_found(submission.url))
+        await self.return_original_submission(update.message, submission)
+        return True
+
+    async def return_original_submission(self, message: Any, submission: Submission) -> None:
+        await message.reply_text(messages.original_found(submission.url))
         for media_path in submission.media_paths:
             if os.path.exists(media_path):
-                await update.message.reply_document(document=media_path, filename=os.path.basename(media_path))
+                await message.reply_document(document=media_path, filename=os.path.basename(media_path))
             else:
                 logging.warning("原图不存在: %s", media_path)
-        return True
 
     async def send_to_review(self, submission_id: int, url: str, username: str, media_files: list[str], metadata: dict) -> Any | None:
         reply_markup = {
