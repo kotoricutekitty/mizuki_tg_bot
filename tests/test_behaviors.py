@@ -323,6 +323,8 @@ async def test_admin_forward_channel_message_gets_relocation_buttons(app_factory
     assert buttons[0]["callback_data"] == "move_r18:1:safe"
     assert buttons[1]["text"] == messages.MOVE_TO_SAFE_BUTTON
     assert buttons[1]["callback_data"] == "move_safe:1:safe"
+    assert buttons[2]["text"] == messages.DELETE_POST_BUTTON
+    assert buttons[2]["callback_data"] == "delete_post:1:safe"
 
 
 @pytest.mark.asyncio
@@ -436,6 +438,37 @@ async def test_admin_moves_published_submission_to_safe_channel(app_factory, sam
     assert bot.calls[1]["chat_id"] == "@archive"
     assert db.get_submission(sub_id).message_id == 101
     assert query.edited_text == "original\n\n✅ 已经通过啦喵 by @admin"
+
+
+@pytest.mark.asyncio
+async def test_admin_deletes_published_submission_from_forward_buttons(app_factory, sample_media):
+    service, db, bot, _ = app_factory(channel="@archive", r18_channel="@r18")
+    sub_id = db.create_submission(
+        user_id=2,
+        username="u",
+        url="https://twitter.com/u/status/delete-me",
+        status="approved",
+        media_paths=[sample_media["jpg"], sample_media["png"]],
+        metadata={
+            "canonical_url": "https://twitter.com/u/status/delete-me",
+            "safety_rating": "safe",
+            "channel_message_ids": [555, 560],
+        },
+        now=service.clock.now(),
+    )
+    db.update_message_id(sub_id, 555, service.clock.now())
+    query = FakeCallbackQuery(f"delete_post:{sub_id}:safe", FakeSentMessage(1, caption="original"))
+
+    await service.handle_callback(FakeUpdate(FakeUser(1, "admin"), callback_query=query))
+
+    assert bot.calls[0] == {"method": "delete_message", "chat_id": "@archive", "message_id": 555}
+    assert bot.calls[1] == {"method": "delete_message", "chat_id": "@archive", "message_id": 560}
+    submission = db.get_submission(sub_id)
+    metadata = json.loads(submission.metadata_json)
+    assert submission.status == "deleted"
+    assert metadata["deleted_by"] == 1
+    assert db.find_by_url("https://twitter.com/u/status/delete-me") is None
+    assert query.edited_text == "original\n\n🗑️ 已经删除啦喵 by @admin"
 
 
 @pytest.mark.asyncio

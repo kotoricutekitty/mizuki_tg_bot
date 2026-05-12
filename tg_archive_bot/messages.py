@@ -39,6 +39,7 @@ APPROVE_BUTTON = "✅ 通过"
 REJECT_BUTTON = "❌ 拒绝"
 MOVE_TO_R18_BUTTON = "转到色图频道"
 MOVE_TO_SAFE_BUTTON = "转到不色频道"
+DELETE_POST_BUTTON = "删除推文"
 
 
 def set_success(key: str, value: str) -> str:
@@ -167,6 +168,10 @@ def callback_approved(existing_caption: str, username: str) -> str:
 
 def callback_rejected(existing_caption: str, username: str) -> str:
     return existing_caption + f"\n\n❌ 已经被拒绝啦喵 by @{username}"
+
+
+def callback_deleted(existing_caption: str, username: str) -> str:
+    return existing_caption + f"\n\n🗑️ 已经删除啦喵 by @{username}"
 
 
 def submitter_approved(url: str) -> str:

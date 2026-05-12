@@ -117,9 +117,12 @@ class Database:
                 f"""
                 SELECT *
                 FROM submissions
-                WHERE normalized_url IN ({placeholders})
-                   OR url IN ({placeholders})
-                   OR canonical_url IN ({placeholders})
+                WHERE (
+                    normalized_url IN ({placeholders})
+                    OR url IN ({placeholders})
+                    OR canonical_url IN ({placeholders})
+                )
+                AND COALESCE(status, '') != 'deleted'
                 ORDER BY id
                 LIMIT 1
                 """,

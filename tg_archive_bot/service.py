@@ -314,6 +314,10 @@ class ArchiveBot:
                             "text": messages.MOVE_TO_SAFE_BUTTON,
                             "callback_data": f"move_safe:{submission.id}:{source_key}",
                         },
+                        {
+                            "text": messages.DELETE_POST_BUTTON,
+                            "callback_data": f"delete_post:{submission.id}:{source_key}",
+                        },
                     ]
                 ]
             }
@@ -481,6 +485,11 @@ class ArchiveBot:
             await self.move_published_submission(submission, action, source_key, user_id)
             await edit_callback_message(query, messages.callback_approved(existing_caption, username))
             return
+        if action == "delete_post":
+            source_key = parts[2] if len(parts) > 2 else ""
+            await self.delete_published_submission(submission, source_key, user_id)
+            await edit_callback_message(query, messages.callback_deleted(existing_caption, username))
+            return
         if submission.status != "pending":
             await query.edit_message_caption(caption=messages.callback_already_done(existing_caption, submission.status))
             return
@@ -643,6 +652,26 @@ class ArchiveBot:
                 logging.warning("删除频道消息失败: channel=%s message_id=%s error=%s", source_channel, message_id, exc)
         self.db.update_metadata(submission.id, metadata, self.clock.now())
         await self.publish_submission(submission.id, reviewer_id)
+
+    async def delete_published_submission(
+        self,
+        submission: Submission,
+        source_key: str,
+        reviewer_id: int,
+    ) -> None:
+        if not submission.message_id:
+            raise RuntimeError(f"Submission #{submission.id} has no channel message id")
+        source_channel = self.source_channel_from_key(source_key) or self.publish_channel_for_submission(submission)
+        for message_id in published_message_ids(submission):
+            try:
+                await self.bot.delete_message(source_channel, message_id)
+            except Exception as exc:
+                logging.warning("删除频道消息失败: channel=%s message_id=%s error=%s", source_channel, message_id, exc)
+        metadata = submission_metadata(submission)
+        metadata["deleted_by"] = reviewer_id
+        metadata["deleted_at"] = self.clock.now().isoformat()
+        self.db.update_metadata(submission.id, metadata, self.clock.now())
+        self.db.update_status(submission.id, "deleted", reviewer_id, self.clock.now())
 
     def source_channel_from_key(self, source_key: str) -> str | None:
         if source_key == "r18" and self.config.r18_channel_id:
