@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import os
@@ -13,6 +14,10 @@ import zipfile
 from datetime import datetime
 from pathlib import Path
 from typing import Protocol
+
+POIPIKU_PLACEHOLDER_SHA256 = {
+    "6397640b9ca8675c94c9357e68dc4c159dce0aba9120e8808e303916f4dc9f37",
+}
 
 
 class Downloader(Protocol):
@@ -97,6 +102,8 @@ class GalleryDownloader:
                     elif ext == "zip":
                         converted = await self._convert_ugoira(file_path)
                         media_files.append(str(converted or file_path))
+            if "poipiku.com" in url:
+                media_files = filter_poipiku_placeholders(media_files)
             if metadata and "canonical_url" not in metadata:
                 metadata["canonical_url"] = url
             return media_files, metadata
@@ -191,3 +198,23 @@ def download_url(url: str, filepath: Path) -> None:
             filepath.write_bytes(response.read())
     except urllib.error.HTTPError as exc:
         raise RuntimeError(f"download failed: {exc.code}") from exc
+
+
+def filter_poipiku_placeholders(media_files: list[str]) -> list[str]:
+    filtered: list[str] = []
+    for media_file in media_files:
+        if is_poipiku_placeholder(Path(media_file)):
+            logging.warning("Poipiku returned a placeholder image, ignoring it: %s", media_file)
+            continue
+        filtered.append(media_file)
+    return filtered
+
+
+def is_poipiku_placeholder(path: Path) -> bool:
+    if path.suffix.lower() not in {".jpg", ".jpeg", ".png", ".gif"}:
+        return False
+    try:
+        digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    except OSError:
+        return False
+    return digest in POIPIKU_PLACEHOLDER_SHA256
