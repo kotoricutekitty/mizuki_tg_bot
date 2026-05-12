@@ -110,8 +110,13 @@ class Database:
         return row_to_submission(row) if row else None
 
     def find_by_url(self, url: str) -> Submission | None:
+        return self.find_by_url_any_status(url, include_deleted=False)
+
+    def find_by_url_any_status(self, url: str, include_deleted: bool = True) -> Submission | None:
         candidates = sorted({url, normalize_url(url)})
         placeholders = ", ".join("?" for _ in candidates)
+        deleted_filter = "" if include_deleted else "AND COALESCE(status, '') != 'deleted'"
+        order = "id DESC" if include_deleted else "id"
         with self.connect() as conn:
             row = conn.execute(
                 f"""
@@ -122,8 +127,8 @@ class Database:
                     OR url IN ({placeholders})
                     OR canonical_url IN ({placeholders})
                 )
-                AND COALESCE(status, '') != 'deleted'
-                ORDER BY id
+                {deleted_filter}
+                ORDER BY {order}
                 LIMIT 1
                 """,
                 (*candidates, *candidates, *candidates),
@@ -220,6 +225,75 @@ class Database:
                 WHERE id = ?
                 """,
                 (json.dumps(metadata, ensure_ascii=False), metadata.get("canonical_url"), now, submission_id),
+            )
+
+    def update_submission_content(
+        self,
+        submission_id: int,
+        *,
+        status: str,
+        media_paths: list[str],
+        metadata: dict[str, Any],
+        reviewer_id: int | None,
+        now: datetime,
+    ) -> None:
+        canonical_url = metadata.get("canonical_url")
+        with self.connect() as conn:
+            conn.execute(
+                """
+                UPDATE submissions
+                SET status = ?, media_paths = ?, reviewed_at = ?, reviewer_id = ?,
+                    message_id = NULL, author_name = ?, title = ?, text = ?,
+                    canonical_url = COALESCE(?, canonical_url), metadata_json = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (
+                    status,
+                    json.dumps(media_paths, ensure_ascii=False),
+                    now,
+                    reviewer_id,
+                    metadata.get("author_name", ""),
+                    metadata.get("title", ""),
+                    metadata.get("text", ""),
+                    canonical_url,
+                    json.dumps(metadata, ensure_ascii=False),
+                    now,
+                    submission_id,
+                ),
+            )
+
+    def submission_stats(self) -> dict[str, int]:
+        with self.connect() as conn:
+            rows = conn.execute("SELECT status, COUNT(*) count FROM submissions GROUP BY status").fetchall()
+            today = conn.execute(
+                "SELECT COUNT(*) count FROM submissions WHERE date(created_at) = date('now', 'localtime')"
+            ).fetchone()
+            week = conn.execute(
+                "SELECT COUNT(*) count FROM submissions WHERE created_at >= datetime('now', '-7 days')"
+            ).fetchone()
+            pending = conn.execute("SELECT COUNT(*) count FROM submissions WHERE status = 'pending'").fetchone()
+        stats = {str(row["status"] or "unknown"): int(row["count"]) for row in rows}
+        stats["today"] = int(today["count"])
+        stats["week"] = int(week["count"])
+        stats["pending"] = int(pending["count"])
+        return stats
+
+    def log_moderation_action(
+        self,
+        *,
+        submission_id: int | None,
+        action: str,
+        admin_id: int | None,
+        detail: str,
+        now: datetime,
+    ) -> None:
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO moderation_logs (submission_id, action, admin_id, detail, created_at)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (submission_id, action, admin_id, detail[:2000], now),
             )
 
     def pending_submissions(self) -> list[Submission]:
@@ -489,6 +563,15 @@ CREATE TABLE IF NOT EXISTS twitter_bookmark_monitor_state (
   value TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS moderation_logs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  submission_id INTEGER,
+  action TEXT NOT NULL,
+  admin_id INTEGER,
+  detail TEXT,
+  created_at TIMESTAMP NOT NULL
+);
+
 """
 
 INDEXES = """
@@ -499,4 +582,6 @@ CREATE INDEX IF NOT EXISTS idx_submissions_canonical_url ON submissions(canonica
 CREATE INDEX IF NOT EXISTS idx_pixiv_downloads_request_time ON pixiv_downloads(request_time);
 CREATE INDEX IF NOT EXISTS idx_twitter_bookmark_items_status ON twitter_bookmark_items(status);
 CREATE INDEX IF NOT EXISTS idx_twitter_bookmark_items_first_seen ON twitter_bookmark_items(first_seen_at);
+CREATE INDEX IF NOT EXISTS idx_moderation_logs_submission_id ON moderation_logs(submission_id);
+CREATE INDEX IF NOT EXISTS idx_moderation_logs_created_at ON moderation_logs(created_at);
 """

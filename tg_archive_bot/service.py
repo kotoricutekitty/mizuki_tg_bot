@@ -177,6 +177,62 @@ class ArchiveBot:
         await update.message.reply_text(messages.BOOKMARK_WATCH_STARTED)
         await self.notify_bookmark_watch_started(exclude_user_id=update.effective_user.id)
 
+    async def find_command(self, update: Any, context: Any = None) -> None:
+        if update.effective_user.id not in self.config.admin_ids:
+            await update.message.reply_text(messages.PERMISSION_DENIED)
+            return
+        target = command_target(context)
+        if not target:
+            await update.message.reply_text(messages.admin_lookup_usage("find"))
+            return
+        submission = self.resolve_submission_target(target)
+        if not submission:
+            await update.message.reply_text(messages.submission_not_found(target))
+            return
+        await update.message.reply_text(messages.submission_summary(submission, submission_metadata(submission)))
+
+    async def stats_command(self, update: Any, context: Any = None) -> None:
+        if update.effective_user.id not in self.config.admin_ids:
+            await update.message.reply_text(messages.PERMISSION_DENIED)
+            return
+        await update.message.reply_text(messages.stats_summary(self.db.submission_stats()))
+
+    async def delete_command(self, update: Any, context: Any = None) -> None:
+        if update.effective_user.id not in self.config.admin_ids:
+            await update.message.reply_text(messages.PERMISSION_DENIED)
+            return
+        target = command_target(context)
+        if not target:
+            await update.message.reply_text(messages.admin_lookup_usage("delete"))
+            return
+        submission = self.resolve_submission_target(target)
+        if not submission:
+            await update.message.reply_text(messages.submission_not_found(target))
+            return
+        await self.admin_delete_submission(submission, update.effective_user.id)
+        await update.message.reply_text(messages.delete_success(submission.id))
+
+    async def retry_command(self, update: Any, context: Any = None) -> None:
+        if update.effective_user.id not in self.config.admin_ids:
+            await update.message.reply_text(messages.PERMISSION_DENIED)
+            return
+        target = command_target(context)
+        if not target:
+            await update.message.reply_text(messages.admin_lookup_usage("retry"))
+            return
+        submission = self.resolve_submission_target(target)
+        if not submission:
+            await update.message.reply_text(messages.submission_not_found(target))
+            return
+        await update.message.reply_text(messages.retry_started(submission.id, submission.url))
+        result = await self.retry_submission(submission, update.effective_user.id)
+        if result == "download_failed":
+            await update.message.reply_text(messages.retry_failed(submission.id, submission.url))
+        elif result == "pending":
+            await update.message.reply_text(messages.retry_pending(submission.id))
+        else:
+            await update.message.reply_text(messages.retry_published(submission.id))
+
     def activate_bookmark_watch(self) -> SubmitResult:
         if not self.bookmark_monitor or not self.bookmark_monitor.is_configured():
             return SubmitResult(503, {"status": "unavailable", "message": "Twitter bookmark monitor is not configured"})
@@ -704,9 +760,11 @@ class ArchiveBot:
         if action == "move_r18":
             metadata["safety_rating"] = "r18"
             metadata["safety_reason"] = "admin moved to r18 channel"
+            log_action = "move_r18"
         else:
             metadata["safety_rating"] = "safe"
             metadata["safety_reason"] = "admin moved to safe channel"
+            log_action = "move_safe"
         metadata.pop("channel_message_ids", None)
         metadata.pop("channel_id", None)
         for message_id in message_ids:
@@ -716,6 +774,13 @@ class ArchiveBot:
                 logging.warning("删除频道消息失败: channel=%s message_id=%s error=%s", source_channel, message_id, exc)
         self.db.update_metadata(submission.id, metadata, self.clock.now())
         await self.publish_submission(submission.id, reviewer_id)
+        self.db.log_moderation_action(
+            submission_id=submission.id,
+            action=log_action,
+            admin_id=reviewer_id,
+            detail=submission.url,
+            now=self.clock.now(),
+        )
 
     async def delete_published_submission(
         self,
@@ -736,6 +801,84 @@ class ArchiveBot:
         metadata["deleted_at"] = self.clock.now().isoformat()
         self.db.update_metadata(submission.id, metadata, self.clock.now())
         self.db.update_status(submission.id, "deleted", reviewer_id, self.clock.now())
+        self.db.log_moderation_action(
+            submission_id=submission.id,
+            action="delete_callback",
+            admin_id=reviewer_id,
+            detail=submission.url,
+            now=self.clock.now(),
+        )
+
+    async def admin_delete_submission(self, submission: Submission, admin_id: int) -> None:
+        if submission.message_id:
+            source_channel = str(submission_metadata(submission).get("channel_id") or self.publish_channel_for_submission(submission))
+            for message_id in published_message_ids(submission):
+                try:
+                    await self.bot.delete_message(source_channel, message_id)
+                except Exception as exc:
+                    logging.warning("删除频道消息失败: channel=%s message_id=%s error=%s", source_channel, message_id, exc)
+        metadata = submission_metadata(submission)
+        metadata["deleted_by"] = admin_id
+        metadata["deleted_at"] = self.clock.now().isoformat()
+        self.db.update_metadata(submission.id, metadata, self.clock.now())
+        self.db.update_status(submission.id, "deleted", admin_id, self.clock.now())
+        self.db.log_moderation_action(
+            submission_id=submission.id,
+            action="delete_command",
+            admin_id=admin_id,
+            detail=submission.url,
+            now=self.clock.now(),
+        )
+
+    async def retry_submission(self, submission: Submission, admin_id: int) -> str:
+        if submission.message_id and submission.status == "approved":
+            await self.admin_delete_submission(submission, admin_id)
+        media_files, metadata = await self.downloader.download_media(submission.url)
+        if not media_files:
+            self.db.log_moderation_action(
+                submission_id=submission.id,
+                action="retry_failed",
+                admin_id=admin_id,
+                detail=submission.url,
+                now=self.clock.now(),
+            )
+            return "download_failed"
+        safety_decision = await self.classify_downloaded_content(submission.url, media_files, metadata)
+        status = "pending" if safety_decision.rating == "uncertain" else "approved"
+        self.db.update_submission_content(
+            submission.id,
+            status=status,
+            media_paths=media_files,
+            metadata=metadata,
+            reviewer_id=admin_id,
+            now=self.clock.now(),
+        )
+        if status == "pending":
+            review_message = await self.send_to_review(submission.id, submission.url, submission.username or "retry", media_files, metadata)
+            if review_message:
+                self.db.update_message_id(submission.id, int(getattr(review_message, "message_id", 0)), self.clock.now())
+            result = "pending"
+        else:
+            await self.publish_submission(submission.id, admin_id)
+            result = "published"
+        self.db.log_moderation_action(
+            submission_id=submission.id,
+            action=f"retry_{result}",
+            admin_id=admin_id,
+            detail=submission.url,
+            now=self.clock.now(),
+        )
+        return result
+
+    def resolve_submission_target(self, target: str) -> Submission | None:
+        stripped = target.strip()
+        if stripped.startswith("#"):
+            stripped = stripped[1:]
+        if stripped.isdigit():
+            return self.db.get_submission(int(stripped))
+        urls = extract_urls_from_text(stripped)
+        url = urls[0] if urls else stripped
+        return self.db.find_by_url_any_status(url, include_deleted=True)
 
     def source_channel_from_key(self, source_key: str) -> str | None:
         if source_key == "r18" and self.config.r18_channel_id:
@@ -800,6 +943,11 @@ def collect_message_text(message: Any) -> str:
             if getattr(entity, "type", None) == "url" and getattr(entity, "url", None):
                 text += entity.url + "\n"
     return text
+
+
+def command_target(context: Any) -> str:
+    args = getattr(context, "args", []) if context is not None else []
+    return " ".join(str(arg) for arg in args).strip()
 
 
 def build_media_group(media_files: list[str], caption: str, parse_mode: str | None = None) -> list[dict[str, Any]]:

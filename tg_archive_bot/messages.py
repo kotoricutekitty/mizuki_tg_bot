@@ -23,11 +23,19 @@ HELP_TEXT = (
 ADMIN_HELP_TEXT = (
     "🛠 管理员小工具箱喵～\n\n"
     "/pending - 看看有没有等摸头审核的投稿喵\n"
+    "/find <id|url> - 查询投稿记录喵\n"
+    "/retry <id|url> - 重新下载/发布投稿喵\n"
+    "/delete <id|url> - 删除投稿并解除查重喵\n"
+    "/stats - 查看投稿统计喵\n"
     "/config - 偷看当前配置喵\n"
     "/set <key> <value> - 调整配置喵\n"
     "/pixiv_status - 查看 Pixiv 下载额度喵\n"
     "/nsfw_threshold <low> <high> - 调整 NSFW 判断阈值喵\n"
     "/bookmark_watch - 开始盯 Twitter bookmark 喵\n\n"
+    "/find <id|url> - 查询投稿记录喵\n"
+    "/retry <id|url> - 重新下载/发布投稿喵\n"
+    "/delete <id|url> - 删除投稿并解除查重喵\n"
+    "/stats - 查看投稿统计喵\n\n"
     "频道消息转发给我时，还可以移动频道或删除投稿喵。"
 )
 
@@ -88,6 +96,68 @@ def nsfw_threshold_usage() -> str:
 
 def nsfw_threshold_updated(low: float, high: float) -> str:
     return f"好哒！NSFW阈值已更新喵：low={low:.2f}, high={high:.2f}"
+
+
+def admin_lookup_usage(command: str) -> str:
+    return f"用法喵：/{command} <submission_id 或链接>"
+
+
+def submission_not_found(target: str) -> str:
+    return f"呜喵...没有找到这个投稿喵：{target}"
+
+
+def submission_summary(submission, metadata: dict) -> str:
+    text = f"📦 投稿 #{submission.id}\n"
+    text += f"状态：{submission.status}\n"
+    text += f"用户：{submission.username} ({submission.user_id})\n"
+    text += f"链接：{submission.url}\n"
+    text += f"canonical：{submission.canonical_url or metadata.get('canonical_url') or ''}\n"
+    text += f"provider：{submission.provider or ''}\n"
+    text += f"媒体数：{len(submission.media_paths)}\n"
+    text += f"频道消息：{submission.message_id or ''}\n"
+    if metadata.get("channel_message_ids"):
+        text += f"频道消息组：{metadata.get('channel_message_ids')}\n"
+    if metadata.get("channel_id"):
+        text += f"频道：{metadata.get('channel_id')}\n"
+    if metadata.get("safety_rating"):
+        text += f"NSFW：{metadata.get('safety_rating')} score={metadata.get('safety_score', 'n/a')} class={metadata.get('safety_class', 'n/a')}\n"
+    if submission.created_at:
+        text += f"创建：{submission.created_at}\n"
+    if submission.updated_at:
+        text += f"更新：{submission.updated_at}\n"
+    return text
+
+
+def retry_started(submission_id: int, url: str) -> str:
+    return f"收到喵，开始重新处理投稿 #{submission_id}：{url}"
+
+
+def retry_failed(submission_id: int, url: str) -> str:
+    return f"呜喵...投稿 #{submission_id} 重新下载失败了喵：{url}"
+
+
+def retry_pending(submission_id: int) -> str:
+    return f"投稿 #{submission_id} 已重新下载，进入审核喵。"
+
+
+def retry_published(submission_id: int) -> str:
+    return f"投稿 #{submission_id} 已重新下载并发布喵。"
+
+
+def delete_success(submission_id: int) -> str:
+    return f"投稿 #{submission_id} 已删除并解除查重喵。"
+
+
+def stats_summary(stats: dict[str, int]) -> str:
+    return (
+        "📊 投稿统计喵：\n"
+        f"今日：{stats.get('today', 0)}\n"
+        f"近7天：{stats.get('week', 0)}\n"
+        f"待审核：{stats.get('pending', 0)}\n"
+        f"已发布：{stats.get('approved', 0)}\n"
+        f"已拒绝：{stats.get('rejected', 0)}\n"
+        f"已删除：{stats.get('deleted', 0)}"
+    )
 
 
 def original_found(url: str) -> str:

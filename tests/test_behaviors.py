@@ -157,13 +157,73 @@ async def test_nsfw_threshold_command(app_factory):
 
 
 @pytest.mark.asyncio
+async def test_admin_find_delete_retry_and_stats_commands(app_factory, sample_media):
+    old_url = "https://poipiku.com/123/456.html"
+    service, db, bot, downloader = app_factory({old_url: ([sample_media["png"]], {"canonical_url": old_url})})
+    sub_id = db.create_submission(
+        user_id=2,
+        username="normal",
+        url=old_url,
+        status="approved",
+        media_paths=[sample_media["jpg"]],
+        metadata={"canonical_url": old_url, "channel_message_ids": [555]},
+        now=service.clock.now(),
+    )
+    db.update_message_id(sub_id, 555, service.clock.now())
+
+    found = FakeMessage()
+    await service.find_command(
+        FakeUpdate(FakeUser(1, "admin"), message=found),
+        type("Ctx", (), {"args": [str(sub_id)]})(),
+    )
+    assert "📦 投稿 #1\n" in found.replies[0]["text"]
+    assert "状态：approved\n" in found.replies[0]["text"]
+    assert f"链接：{old_url}\n" in found.replies[0]["text"]
+
+    deleted = FakeMessage()
+    await service.delete_command(
+        FakeUpdate(FakeUser(1, "admin"), message=deleted),
+        type("Ctx", (), {"args": [old_url]})(),
+    )
+    assert deleted.replies[0]["text"] == messages.delete_success(sub_id)
+    assert db.get_submission(sub_id).status == "deleted"
+    assert db.find_by_url(old_url) is None
+    assert bot.calls[0] == {"method": "delete_message", "chat_id": "@archive", "message_id": 555}
+
+    retry = FakeMessage()
+    await service.retry_command(
+        FakeUpdate(FakeUser(1, "admin"), message=retry),
+        type("Ctx", (), {"args": [str(sub_id)]})(),
+    )
+    assert retry.replies[0]["text"] == messages.retry_started(sub_id, old_url)
+    assert retry.replies[-1]["text"] == messages.retry_published(sub_id)
+    assert downloader.calls == [old_url]
+    assert db.get_submission(sub_id).status == "approved"
+    assert db.get_submission(sub_id).media_paths == [sample_media["png"]]
+
+    stats = FakeMessage()
+    await service.stats_command(FakeUpdate(FakeUser(1, "admin"), message=stats))
+    assert "📊 投稿统计喵：" in stats.replies[0]["text"]
+    assert "已发布：1" in stats.replies[0]["text"]
+
+
+@pytest.mark.asyncio
 async def test_set_usage_and_non_admin_command_permissions(app_factory):
     service, *_ = app_factory()
     short = FakeMessage()
     await service.set_command(FakeUpdate(FakeUser(1, "admin"), message=short), type("Ctx", (), {"args": ["only"]})())
     assert short.replies[0]["text"] == messages.SET_USAGE
 
-    for command in (service.set_command, service.pending_command, service.pixiv_status_command, service.nsfw_threshold_command):
+    for command in (
+        service.set_command,
+        service.pending_command,
+        service.pixiv_status_command,
+        service.nsfw_threshold_command,
+        service.find_command,
+        service.retry_command,
+        service.delete_command,
+        service.stats_command,
+    ):
         message = FakeMessage()
         ctx = type("Ctx", (), {"args": ["key", "value"]})()
         await command(FakeUpdate(FakeUser(2, "normal"), message=message), ctx)
