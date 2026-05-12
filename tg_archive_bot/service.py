@@ -404,15 +404,7 @@ class ArchiveBot:
         normalized_url = normalize_url(url)
         existing = self.db.find_by_url(normalized_url)
         if existing:
-            return SubmitResult(
-                409,
-                {
-                    "status": "already_exists",
-                    "message": f"链接已投稿，ID #{existing.id}，状态：{existing.status}",
-                    "submission_id": existing.id,
-                    "current_status": existing.status,
-                },
-            )
+            return api_duplicate_result(existing)
         if "pixiv.net" in normalized_url:
             count, _, _ = self.db.count_pixiv_downloads(self.config.pixiv_limit_hours)
             if count >= self.config.pixiv_limit_count:
@@ -430,6 +422,9 @@ class ArchiveBot:
         media_files, metadata = await self.downloader.download_media(normalized_url)
         if not media_files:
             return SubmitResult(400, {"status": "download_failed", "message": "媒体下载失败，请检查链接是否有效"})
+        existing = self.find_existing_submission_from_metadata(normalized_url, metadata)
+        if existing:
+            return api_duplicate_result(existing)
         admin_id = self.config.admin_ids[0] if self.config.admin_ids else 0
         submission_id = self.db.create_submission(
             user_id=admin_id,
@@ -466,6 +461,9 @@ class ArchiveBot:
         media_files, metadata = await self.downloader.download_media(normalized_url)
         if not media_files:
             return "download_failed", None
+        existing = self.find_existing_submission_from_metadata(normalized_url, metadata)
+        if existing:
+            return "duplicate", existing.id
         admin_id = self.config.admin_ids[0] if self.config.admin_ids else 0
         submission_id = self.db.create_submission(
             user_id=admin_id,
@@ -483,6 +481,15 @@ class ArchiveBot:
             except Exception as exc:
                 logging.warning("无法通知管理员 %s: %s", admin, exc)
         return "submitted", submission_id
+
+    def find_existing_submission_from_metadata(self, url: str, metadata: dict[str, Any]) -> Submission | None:
+        for candidate in (metadata.get("canonical_url"), url):
+            if not candidate:
+                continue
+            existing = self.db.find_by_url(str(candidate))
+            if existing:
+                return existing
+        return None
 
 
 def collect_message_text(message: Any) -> str:
@@ -517,6 +524,18 @@ def build_media_group(media_files: list[str], caption: str, parse_mode: str | No
             item["parse_mode"] = parse_mode
         media.append(item)
     return media
+
+
+def api_duplicate_result(existing: Submission) -> SubmitResult:
+    return SubmitResult(
+        409,
+        {
+            "status": "already_exists",
+            "message": f"链接已投稿，ID #{existing.id}，状态：{existing.status}",
+            "submission_id": existing.id,
+            "current_status": existing.status,
+        },
+    )
 
 
 def pixiv_work_id(url: str) -> str:

@@ -109,11 +109,21 @@ class Database:
             row = conn.execute("SELECT * FROM submissions WHERE id = ?", (submission_id,)).fetchone()
         return row_to_submission(row) if row else None
 
-    def find_by_url(self, normalized_url: str) -> Submission | None:
+    def find_by_url(self, url: str) -> Submission | None:
+        candidates = sorted({url, normalize_url(url)})
+        placeholders = ", ".join("?" for _ in candidates)
         with self.connect() as conn:
             row = conn.execute(
-                "SELECT * FROM submissions WHERE normalized_url = ? OR url = ? LIMIT 1",
-                (normalized_url, normalized_url),
+                f"""
+                SELECT *
+                FROM submissions
+                WHERE normalized_url IN ({placeholders})
+                   OR url IN ({placeholders})
+                   OR canonical_url IN ({placeholders})
+                ORDER BY id
+                LIMIT 1
+                """,
+                (*candidates, *candidates, *candidates),
             ).fetchone()
         return row_to_submission(row) if row else None
 
@@ -406,6 +416,7 @@ INDEXES = """
 CREATE INDEX IF NOT EXISTS idx_submissions_status ON submissions(status);
 CREATE INDEX IF NOT EXISTS idx_submissions_message_id ON submissions(message_id);
 CREATE INDEX IF NOT EXISTS idx_submissions_normalized_url ON submissions(normalized_url);
+CREATE INDEX IF NOT EXISTS idx_submissions_canonical_url ON submissions(canonical_url);
 CREATE INDEX IF NOT EXISTS idx_pixiv_downloads_request_time ON pixiv_downloads(request_time);
 CREATE INDEX IF NOT EXISTS idx_twitter_bookmark_items_status ON twitter_bookmark_items(status);
 CREATE INDEX IF NOT EXISTS idx_twitter_bookmark_items_first_seen ON twitter_bookmark_items(first_seen_at);

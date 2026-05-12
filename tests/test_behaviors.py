@@ -367,6 +367,32 @@ async def test_http_api_error_branches_without_tg(app_factory, sample_media):
 
 
 @pytest.mark.asyncio
+async def test_http_api_rechecks_canonical_url_before_publish(app_factory, sample_media):
+    existing_url = "https://twitter.com/u/status/30"
+    incoming_url = "https://twitter.com/u/status/31"
+    service, db, bot, downloader = app_factory({
+        incoming_url: ([sample_media["jpg"]], {"canonical_url": existing_url}),
+    })
+    db.create_submission(
+        user_id=1,
+        username="admin",
+        url=existing_url,
+        status="approved",
+        media_paths=[sample_media["jpg"]],
+        metadata={"canonical_url": existing_url},
+        now=service.clock.now(),
+    )
+
+    duplicate = await service.api_submit(incoming_url, "api-token", "127.0.0.1")
+
+    assert duplicate.status == 409
+    assert duplicate.body["status"] == "already_exists"
+    assert duplicate.body["submission_id"] == 1
+    assert downloader.calls == [incoming_url]
+    assert bot.calls == []
+
+
+@pytest.mark.asyncio
 async def test_http_api_pixiv_rate_limit_branch_without_user_flow(app_factory):
     service, _, _, _ = app_factory()
     for _ in range(100):
@@ -375,6 +401,26 @@ async def test_http_api_pixiv_rate_limit_branch_without_user_flow(app_factory):
     assert limited.status == 429
     assert limited.body["status"] == "rate_limit"
     assert limited.body["used"] == 100
+
+
+def test_find_by_url_matches_canonical_url(app_factory, sample_media):
+    service, db, *_ = app_factory()
+    original_url = "https://poipiku.com/123/456.html"
+    canonical_url = "https://poipiku.com/UserIllustShow.jsp?illust_id=456"
+    db.create_submission(
+        user_id=1,
+        username="admin",
+        url=original_url,
+        status="approved",
+        media_paths=[sample_media["jpg"]],
+        metadata={"canonical_url": canonical_url},
+        now=service.clock.now(),
+    )
+
+    existing = db.find_by_url(canonical_url)
+
+    assert existing is not None
+    assert existing.id == 1
 
 
 def test_legacy_database_migration_compatibility(tmp_path, sample_media):
