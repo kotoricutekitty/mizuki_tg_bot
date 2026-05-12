@@ -350,7 +350,10 @@ class TwitterBookmarkMonitor:
                     self.last_activity_at = now
             except Exception as exc:
                 logging.exception("Failed to submit %s bookmark %s: %s", self.label, item.tweet_id, exc)
-                self.db.mark_bookmark_failed(item.tweet_id, str(exc), now, provider=self.provider)
+                if is_retryable_submit_error(exc):
+                    self.db.mark_bookmark_retryable_error(item.tweet_id, str(exc), now, provider=self.provider)
+                else:
+                    self.db.mark_bookmark_failed(item.tweet_id, str(exc), now, provider=self.provider)
                 self.last_activity_at = now
                 await self.archive_bot.notify_admin_error(
                     f"{self.label} bookmark submit failed",
@@ -381,6 +384,15 @@ class TwitterBookmarkMonitor:
         self.last_fetch_adaptive = True
         logging.info("%s bookmark monitor fetched %s bookmarks with adaptive pagination", self.label, len(posts))
         return posts
+
+
+def is_retryable_submit_error(exc: Exception) -> bool:
+    module = type(exc).__module__
+    name = type(exc).__name__
+    text = str(exc).lower()
+    if module.startswith("telegram.") and name in {"TimedOut", "NetworkError", "RetryAfter"}:
+        return True
+    return "timed out" in text or "timeout" in text
 
 
 def parse_x_bookmarks_http_error(exc: urllib.error.HTTPError) -> XBookmarksAPIError:

@@ -444,6 +444,14 @@ class Database:
                 (error[:1000], now, tweet_id),
             )
 
+    def mark_bookmark_retryable_error(self, tweet_id: str, error: str, now: datetime, provider: str = "twitter") -> None:
+        item_table, _ = bookmark_tables(provider)
+        with self.connect() as conn:
+            conn.execute(
+                f"UPDATE {item_table} SET status = 'pending', error = ?, updated_at = ? WHERE tweet_id = ?",
+                (error[:1000], now, tweet_id),
+            )
+
 
 def bookmark_tables(provider: str) -> tuple[str, str]:
     if provider not in {"twitter", "pixiv", "poipiku"}:

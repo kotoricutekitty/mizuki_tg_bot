@@ -471,3 +471,37 @@ async def test_bookmark_poll_error_notifies_admins_with_throttle(app_factory):
     await monitor.poll_once()
     error_calls = [call for call in bot.calls if call["method"] == "send_message" and messages.ADMIN_ERROR_PREFIX in call["text"]]
     assert len(error_calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_bookmark_submit_timeout_stays_pending_for_retry(app_factory):
+    service, db, bot, _ = app_factory()
+    clock = FakeClock()
+    url = "https://www.pixiv.net/artworks/129104622"
+    client = FakeBookmarkClient([[BookmarkPost("129104622", url)]])
+    monitor = TwitterBookmarkMonitor(
+        config=with_bookmark_config(service.config),
+        db=db,
+        archive_bot=service,
+        client=client,
+        clock=clock,
+        provider="pixiv",
+        label="Pixiv",
+        configured=lambda: True,
+    )
+    monitor.activate()
+
+    async def timeout_submit(url, username="bookmark_monitor"):
+        raise TimeoutError("Timed out")
+
+    service.submit_url_as_admin = timeout_submit
+    await monitor.poll_once()
+    clock.advance(10)
+    await monitor.poll_once()
+
+    item = db.pending_bookmark_items(provider="pixiv")[0]
+    assert item.tweet_id == "129104622"
+    assert item.error == "Timed out"
+    assert db.bookmark_item_count(provider="pixiv") == 1
+    error_calls = [call for call in bot.calls if call["method"] == "send_message" and messages.ADMIN_ERROR_PREFIX in call["text"]]
+    assert len(error_calls) == 1
