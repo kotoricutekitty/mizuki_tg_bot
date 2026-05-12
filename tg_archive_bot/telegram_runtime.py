@@ -149,6 +149,7 @@ async def main() -> None:
         bookmark_task = asyncio.create_task(bookmark_monitor.run_forever())
         if config.twitter_bookmarks_enabled:
             bookmark_monitor.activate()
+            await archive_bot.notify_bookmark_watch_started()
     logging.info("Bot started successfully!")
 
     try:

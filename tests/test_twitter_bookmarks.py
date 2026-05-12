@@ -9,7 +9,7 @@ from tests.fakes import FakeBookmarkClient, FakeClock
 from tests.fakes import FakeMessage, FakeUpdate, FakeUser
 from tg_archive_bot.config import BotConfig
 from tg_archive_bot import messages
-from tg_archive_bot.http_api import start_bookmarks_payload
+from tg_archive_bot.http_api import start_bookmarks, start_bookmarks_payload
 from tg_archive_bot.twitter_bookmarks import (
     BookmarkPost,
     TwitterBookmarkMonitor,
@@ -148,7 +148,7 @@ async def test_bookmark_duplicate_is_marked_without_resubmitting(app_factory, sa
 
 @pytest.mark.asyncio
 async def test_bookmark_monitor_activation_and_idle_shutdown(app_factory):
-    service, db, _, _ = app_factory()
+    service, db, bot, _ = app_factory()
     clock = FakeClock()
     client = FakeBookmarkClient([[], [], []])
     monitor = monitor_for(service, db, client, clock)
@@ -162,11 +162,14 @@ async def test_bookmark_monitor_activation_and_idle_shutdown(app_factory):
     clock.advance(20 * 60)
     await monitor.poll_once()
     assert not monitor.active
+    assert bot.calls[-1]["method"] == "send_message"
+    assert bot.calls[-1]["chat_id"] == 1
+    assert bot.calls[-1]["text"] == messages.BOOKMARK_WATCH_STOPPED_IDLE
 
 
 @pytest.mark.asyncio
 async def test_admin_command_starts_bookmark_watch(app_factory):
-    service, db, _, _ = app_factory()
+    service, db, bot, _ = app_factory(admin_ids=(1, 2))
     clock = FakeClock()
     monitor = monitor_for(service, db, FakeBookmarkClient([[]]), clock)
     service.bookmark_monitor = monitor
@@ -176,6 +179,7 @@ async def test_admin_command_starts_bookmark_watch(app_factory):
 
     assert monitor.active
     assert message.replies[0]["text"] == messages.BOOKMARK_WATCH_STARTED
+    assert bot.calls == [{"method": "send_message", "chat_id": 2, "text": messages.BOOKMARK_WATCH_STARTED}]
 
 
 @pytest.mark.asyncio
@@ -205,6 +209,22 @@ def test_http_bookmark_start_uses_post_token(app_factory):
 
 
 @pytest.mark.asyncio
+async def test_http_bookmark_start_notifies_admins(app_factory):
+    service, db, bot, _ = app_factory(admin_ids=(1, 2))
+    monitor = monitor_for(service, db, FakeBookmarkClient([[]]), FakeClock())
+    service.bookmark_monitor = monitor
+
+    result = await start_bookmarks(service, "api-token")
+
+    assert result.status == 200
+    assert monitor.active
+    assert bot.calls == [
+        {"method": "send_message", "chat_id": 1, "text": messages.BOOKMARK_WATCH_STARTED},
+        {"method": "send_message", "chat_id": 2, "text": messages.BOOKMARK_WATCH_STARTED},
+    ]
+
+
+@pytest.mark.asyncio
 async def test_bookmark_monitor_stops_when_x_credits_are_depleted(app_factory):
     service, db, bot, downloader = app_factory()
     clock = FakeClock()
@@ -225,7 +245,9 @@ async def test_bookmark_monitor_stops_when_x_credits_are_depleted(app_factory):
 
     assert not monitor.active
     assert downloader.calls == []
-    assert bot.calls == []
+    assert bot.calls == [
+        {"method": "send_message", "chat_id": 1, "text": messages.BOOKMARK_WATCH_STOPPED_CREDITS}
+    ]
     assert db.bookmark_item_count() == 0
     assert db.get_bookmark_monitor_state("last_error_code") == "credits_depleted"
     assert "CreditsDepleted" in db.get_bookmark_monitor_state("last_error")

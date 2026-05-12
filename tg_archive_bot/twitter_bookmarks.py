@@ -148,6 +148,7 @@ class TwitterBookmarkMonitor:
             self.db.set_bookmark_monitor_state("last_error", str(exc))
             self.db.set_bookmark_monitor_state("credits_depleted_at", now.isoformat())
             logging.error("Twitter bookmark monitor stopped because X API credits are depleted: %s", exc)
+            await self.archive_bot.notify_bookmark_watch_stopped("credits_depleted")
             return
         current_ids = {post.tweet_id for post in posts}
         changed = self.last_seen_ids is None or current_ids != self.last_seen_ids
@@ -201,6 +202,7 @@ class TwitterBookmarkMonitor:
         if self.last_activity_at and now - self.last_activity_at >= timedelta(seconds=self.config.twitter_bookmarks_idle_seconds):
             self.active = False
             logging.info("Twitter bookmark monitor auto-stopped after idle timeout")
+            await self.archive_bot.notify_bookmark_watch_stopped("idle")
 
 
 def parse_x_bookmarks_http_error(exc: urllib.error.HTTPError) -> XBookmarksAPIError:

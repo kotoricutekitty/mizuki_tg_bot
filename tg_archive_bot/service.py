@@ -122,12 +122,32 @@ class ArchiveBot:
             return
         self.bookmark_monitor.activate()
         await update.message.reply_text(messages.BOOKMARK_WATCH_STARTED)
+        await self.notify_bookmark_watch_started(exclude_user_id=update.effective_user.id)
 
     def activate_bookmark_watch(self) -> SubmitResult:
         if not self.bookmark_monitor or not self.bookmark_monitor.is_configured():
             return SubmitResult(503, {"status": "unavailable", "message": "Twitter bookmark monitor is not configured"})
         self.bookmark_monitor.activate()
         return SubmitResult(200, {"status": "started", "message": "Twitter bookmark monitor started"})
+
+    async def notify_bookmark_watch_started(self, exclude_user_id: int | None = None) -> None:
+        await self._notify_admins(messages.BOOKMARK_WATCH_STARTED, exclude_user_id=exclude_user_id)
+
+    async def notify_bookmark_watch_stopped(self, reason: str) -> None:
+        if reason == "credits_depleted":
+            text = messages.BOOKMARK_WATCH_STOPPED_CREDITS
+        else:
+            text = messages.BOOKMARK_WATCH_STOPPED_IDLE
+        await self._notify_admins(text)
+
+    async def _notify_admins(self, text: str, exclude_user_id: int | None = None) -> None:
+        for admin_id in self.config.admin_ids:
+            if exclude_user_id is not None and admin_id == exclude_user_id:
+                continue
+            try:
+                await self.bot.send_message(admin_id, text)
+            except Exception as exc:
+                logging.exception("Failed to notify admin %s: %s", admin_id, exc)
 
     async def handle_message(self, update: Any, context: Any = None) -> None:
         if not update.message:

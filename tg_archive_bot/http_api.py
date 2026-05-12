@@ -15,6 +15,13 @@ def start_bookmarks_payload(bot: ArchiveBot, token: str | None) -> SubmitResult:
     return bot.activate_bookmark_watch()
 
 
+async def start_bookmarks(bot: ArchiveBot, token: str | None) -> SubmitResult:
+    result = start_bookmarks_payload(bot, token)
+    if result.status == 200:
+        await bot.notify_bookmark_watch_started()
+    return result
+
+
 async def run_http_api(bot: ArchiveBot, host: str, port: int):
     from aiohttp import web
 
@@ -26,7 +33,7 @@ async def run_http_api(bot: ArchiveBot, host: str, port: int):
 
     async def handle_bookmarks_start(request: web.Request) -> web.Response:
         token = request.headers.get("X-Post-Token", "")
-        result = start_bookmarks_payload(bot, token)
+        result = await start_bookmarks(bot, token)
         return web.json_response(result.body, status=result.status)
 
     app = web.Application()
