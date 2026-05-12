@@ -268,6 +268,48 @@ async def test_forward_channel_message_returns_originals(app_factory, sample_med
 
 
 @pytest.mark.asyncio
+async def test_forward_album_item_returns_originals_from_recorded_ids(app_factory, sample_media):
+    service, db, *_ = app_factory(channel="@archive")
+    sub_id = db.create_submission(
+        user_id=2,
+        username="u",
+        url="https://twitter.com/u/status/album",
+        status="approved",
+        media_paths=[sample_media["jpg"], sample_media["png"]],
+        metadata={"channel_message_ids": [555, 560]},
+        now=service.clock.now(),
+    )
+    db.update_message_id(sub_id, 555, service.clock.now())
+    message = FakeMessage(forward_origin=FakeForwardOrigin(chat=FakeChat(-100, "archive"), message_id=560))
+
+    await service.handle_message(FakeUpdate(FakeUser(2, "u"), message=message))
+
+    assert message.replies[0]["text"] == messages.original_found("https://twitter.com/u/status/album")
+    assert len(message.documents) == 2
+
+
+@pytest.mark.asyncio
+async def test_forward_album_item_returns_originals_from_legacy_inferred_ids(app_factory, sample_media):
+    service, db, *_ = app_factory(channel="@archive")
+    sub_id = db.create_submission(
+        user_id=2,
+        username="u",
+        url="https://twitter.com/u/status/legacy-album",
+        status="approved",
+        media_paths=[sample_media["jpg"], sample_media["png"]],
+        metadata={},
+        now=service.clock.now(),
+    )
+    db.update_message_id(sub_id, 555, service.clock.now())
+    message = FakeMessage(forward_origin=FakeForwardOrigin(chat=FakeChat(-100, "archive"), message_id=556))
+
+    await service.handle_message(FakeUpdate(FakeUser(2, "u"), message=message))
+
+    assert message.replies[0]["text"] == messages.original_found("https://twitter.com/u/status/legacy-album")
+    assert len(message.documents) == 2
+
+
+@pytest.mark.asyncio
 async def test_admin_forward_channel_message_gets_relocation_buttons(app_factory, sample_media):
     service, db, *_ = app_factory(channel="@archive", r18_channel="@r18")
     db.create_submission(user_id=2, username="u", url="https://twitter.com/u/status/1", status="approved", media_paths=[sample_media["jpg"]], metadata={}, now=service.clock.now())
@@ -317,6 +359,59 @@ async def test_admin_moves_published_submission_to_r18_channel(app_factory, samp
     assert bot.calls[1]["chat_id"] == "@r18"
     assert db.get_submission(sub_id).message_id == 101
     assert query.edited_text == "original\n\n✅ 已经通过啦喵 by @admin"
+
+
+@pytest.mark.asyncio
+async def test_admin_moves_published_media_group_deletes_all_original_messages(app_factory, sample_media):
+    service, db, bot, _ = app_factory(channel="@archive", r18_channel="@r18")
+    sub_id = db.create_submission(
+        user_id=2,
+        username="u",
+        url="https://twitter.com/u/status/album",
+        status="approved",
+        media_paths=[sample_media["jpg"], sample_media["png"]],
+        metadata={"canonical_url": "https://twitter.com/u/status/album", "safety_rating": "safe"},
+        now=service.clock.now(),
+    )
+    db.update_message_id(sub_id, 555, service.clock.now())
+    query = FakeCallbackQuery(f"move_r18:{sub_id}:safe", FakeSentMessage(1, caption="original"))
+
+    await service.handle_callback(FakeUpdate(FakeUser(1, "admin"), callback_query=query))
+
+    assert bot.calls[0] == {"method": "delete_message", "chat_id": "@archive", "message_id": 555}
+    assert bot.calls[1] == {"method": "delete_message", "chat_id": "@archive", "message_id": 556}
+    assert bot.calls[2]["method"] == "send_media_group"
+    assert bot.calls[2]["chat_id"] == "@r18"
+    submission = db.get_submission(sub_id)
+    metadata = json.loads(submission.metadata_json)
+    assert submission.message_id == 101
+    assert metadata["channel_message_ids"] == [101, 102]
+
+
+@pytest.mark.asyncio
+async def test_admin_moves_published_submission_deletes_recorded_message_ids(app_factory, sample_media):
+    service, db, bot, _ = app_factory(channel="@archive", r18_channel="@r18")
+    sub_id = db.create_submission(
+        user_id=2,
+        username="u",
+        url="https://twitter.com/u/status/nonconsecutive",
+        status="approved",
+        media_paths=[sample_media["jpg"], sample_media["png"]],
+        metadata={
+            "canonical_url": "https://twitter.com/u/status/nonconsecutive",
+            "safety_rating": "safe",
+            "channel_message_ids": [555, 560],
+        },
+        now=service.clock.now(),
+    )
+    db.update_message_id(sub_id, 555, service.clock.now())
+    query = FakeCallbackQuery(f"move_r18:{sub_id}:safe", FakeSentMessage(1, caption="original"))
+
+    await service.handle_callback(FakeUpdate(FakeUser(1, "admin"), callback_query=query))
+
+    assert bot.calls[0] == {"method": "delete_message", "chat_id": "@archive", "message_id": 555}
+    assert bot.calls[1] == {"method": "delete_message", "chat_id": "@archive", "message_id": 560}
+    assert bot.calls[2]["method"] == "send_media_group"
 
 
 @pytest.mark.asyncio
@@ -383,7 +478,10 @@ async def test_publish_two_to_ten_images_uses_media_group(app_factory, sample_me
     assert bot.calls[0]["method"] == "send_media_group"
     assert bot.calls[0]["media"][0]["caption"] == "<b>artist</b>: 「hello」\nhttps://x.com/u/status/10"
     assert bot.calls[0]["media"][0]["parse_mode"] == "HTML"
-    assert db.get_submission(sub_id).message_id is not None
+    submission = db.get_submission(sub_id)
+    metadata = json.loads(submission.metadata_json)
+    assert submission.message_id == 101
+    assert metadata["channel_message_ids"] == [101, 102]
 
 
 @pytest.mark.asyncio

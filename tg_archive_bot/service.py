@@ -369,6 +369,7 @@ class ArchiveBot:
             canonical_url=submission.canonical_url,
         )
         channel_message_id: int | None = None
+        channel_message_ids: list[int] = []
         media_files = submission.media_paths
         if not media_files:
             logging.error("发布失败: 投稿 #%s 没有媒体", submission_id)
@@ -382,6 +383,8 @@ class ArchiveBot:
                     parse_mode="HTML",
                 )
                 channel_message_id = getattr(sent, "message_id", None)
+                if channel_message_id:
+                    channel_message_ids.append(int(channel_message_id))
             else:
                 sent_media = await self.bot.send_media_group(
                     chat_id=target_channel,
@@ -389,6 +392,11 @@ class ArchiveBot:
                 )
                 if sent_media:
                     channel_message_id = getattr(sent_media[0], "message_id", None)
+                    channel_message_ids.extend(
+                        int(message_id)
+                        for message_id in (getattr(message, "message_id", None) for message in sent_media)
+                        if message_id
+                    )
         else:
             reply_markup = {"inline_keyboard": [[{"text": "🖼️ 打开完整画廊", "url": submission.url}]]}
             sent = await self.bot.send_photo(
@@ -399,6 +407,8 @@ class ArchiveBot:
                 reply_markup=reply_markup,
             )
             channel_message_id = getattr(sent, "message_id", None)
+            if channel_message_id:
+                channel_message_ids.append(int(channel_message_id))
             total_groups = (len(media_files) + 9) // 10
             work_id = pixiv_work_id(submission.url)
             for group_idx in range(total_groups):
@@ -406,12 +416,22 @@ class ArchiveBot:
                 group_caption = f"Full set {group_idx + 1}/{total_groups}"
                 if work_id:
                     group_caption += f" — Pixiv {work_id}"
-                await self.bot.send_media_group(
+                sent_media = await self.bot.send_media_group(
                     chat_id=target_channel,
                     media=build_media_group(group_files, group_caption),
                 )
+                channel_message_ids.extend(
+                    int(message_id)
+                    for message_id in (getattr(message, "message_id", None) for message in sent_media or [])
+                    if message_id
+                )
         if channel_message_id:
             self.db.update_message_id(submission_id, int(channel_message_id), self.clock.now())
+        if channel_message_ids:
+            metadata = submission_metadata(submission)
+            metadata["channel_message_ids"] = channel_message_ids
+            metadata["channel_id"] = str(target_channel)
+            self.db.update_metadata(submission_id, metadata, self.clock.now())
         logging.info("发布成功: 投稿 #%s 已发送到频道 %s", submission_id, target_channel)
         return channel_message_id
 
@@ -607,13 +627,20 @@ class ArchiveBot:
             raise RuntimeError(f"Submission #{submission.id} has no channel message id")
         source_channel = self.source_channel_from_key(source_key) or self.publish_channel_for_submission(submission)
         metadata = submission_metadata(submission)
+        message_ids = published_message_ids(submission)
         if action == "move_r18":
             metadata["safety_rating"] = "r18"
             metadata["safety_reason"] = "admin moved to r18 channel"
         else:
             metadata["safety_rating"] = "safe"
             metadata["safety_reason"] = "admin moved to safe channel"
-        await self.bot.delete_message(source_channel, int(submission.message_id))
+        metadata.pop("channel_message_ids", None)
+        metadata.pop("channel_id", None)
+        for message_id in message_ids:
+            try:
+                await self.bot.delete_message(source_channel, message_id)
+            except Exception as exc:
+                logging.warning("删除频道消息失败: channel=%s message_id=%s error=%s", source_channel, message_id, exc)
         self.db.update_metadata(submission.id, metadata, self.clock.now())
         await self.publish_submission(submission.id, reviewer_id)
 
@@ -722,6 +749,35 @@ def submission_metadata(submission: Submission) -> dict[str, Any]:
     metadata.setdefault("title", submission.title or "")
     metadata.setdefault("text", submission.text or "")
     return metadata
+
+
+def published_message_ids(submission: Submission) -> list[int]:
+    metadata = submission_metadata(submission)
+    stored_ids = metadata.get("channel_message_ids")
+    if isinstance(stored_ids, list):
+        ids = parse_message_ids(stored_ids)
+        if ids:
+            return ids
+    if not submission.message_id:
+        return []
+    if 1 < len(submission.media_paths) <= 10:
+        return [int(submission.message_id) + index for index in range(len(submission.media_paths))]
+    return [int(submission.message_id)]
+
+
+def parse_message_ids(values: list[Any]) -> list[int]:
+    ids: list[int] = []
+    seen: set[int] = set()
+    for value in values:
+        try:
+            message_id = int(value)
+        except (TypeError, ValueError):
+            continue
+        if message_id in seen:
+            continue
+        seen.add(message_id)
+        ids.append(message_id)
+    return ids
 
 
 def is_forward_from_channel(chat: Any, channel_id: str) -> bool:

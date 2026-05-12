@@ -130,7 +130,29 @@ class Database:
     def find_by_message_id(self, message_id: int) -> Submission | None:
         with self.connect() as conn:
             row = conn.execute("SELECT * FROM submissions WHERE message_id = ? LIMIT 1", (message_id,)).fetchone()
-        return row_to_submission(row) if row else None
+            if row:
+                return row_to_submission(row)
+            rows = conn.execute(
+                """
+                SELECT *
+                FROM submissions
+                WHERE metadata_json LIKE '%channel_message_ids%'
+                   OR (
+                        message_id IS NOT NULL
+                        AND media_paths IS NOT NULL
+                        AND message_id <= ?
+                        AND message_id + 10 > ?
+                   )
+                ORDER BY id DESC
+                """,
+                (message_id, message_id),
+            ).fetchall()
+        for row in rows:
+            if message_id in metadata_message_ids(row):
+                return row_to_submission(row)
+            if message_id in inferred_album_message_ids(row):
+                return row_to_submission(row)
+        return None
 
     def create_submission(
         self,
@@ -337,6 +359,44 @@ def row_to_submission(row: sqlite3.Row) -> Submission:
         metadata_json=data.get("metadata_json"),
         updated_at=str(data.get("updated_at")) if data.get("updated_at") is not None else None,
     )
+
+
+def metadata_message_ids(row: sqlite3.Row) -> list[int]:
+    try:
+        metadata = json.loads(row["metadata_json"] or "{}")
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(metadata, dict) or not isinstance(metadata.get("channel_message_ids"), list):
+        return []
+    return parse_message_ids(metadata["channel_message_ids"])
+
+
+def inferred_album_message_ids(row: sqlite3.Row) -> list[int]:
+    first_message_id = row["message_id"]
+    if not first_message_id:
+        return []
+    try:
+        media_paths = json.loads(row["media_paths"] or "[]")
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(media_paths, list) or not 1 < len(media_paths) <= 10:
+        return []
+    return [int(first_message_id) + index for index in range(len(media_paths))]
+
+
+def parse_message_ids(values: list[Any]) -> list[int]:
+    ids: list[int] = []
+    seen: set[int] = set()
+    for value in values:
+        try:
+            message_id = int(value)
+        except (TypeError, ValueError):
+            continue
+        if message_id in seen:
+            continue
+        seen.add(message_id)
+        ids.append(message_id)
+    return ids
 
 
 def row_to_bookmark_item(row: sqlite3.Row) -> BookmarkItem:
