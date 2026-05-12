@@ -176,9 +176,13 @@ async def test_admin_find_delete_retry_and_stats_commands(app_factory, sample_me
         FakeUpdate(FakeUser(1, "admin"), message=found),
         type("Ctx", (), {"args": [str(sub_id)]})(),
     )
-    assert "📦 投稿 #1\n" in found.replies[0]["text"]
-    assert "状态：approved\n" in found.replies[0]["text"]
-    assert f"链接：{old_url}\n" in found.replies[0]["text"]
+    assert found.replies == []
+    assert bot.calls[0]["method"] == "send_photo"
+    assert bot.calls[0]["chat_id"] == 1
+    assert bot.calls[0]["photo"] == sample_media["jpg"]
+    assert "📦 投稿 #1\n" in bot.calls[0]["caption"]
+    assert "状态：approved\n" in bot.calls[0]["caption"]
+    assert f"链接：{old_url}\n" in bot.calls[0]["caption"]
 
     deleted = FakeMessage()
     await service.delete_command(
@@ -188,7 +192,7 @@ async def test_admin_find_delete_retry_and_stats_commands(app_factory, sample_me
     assert deleted.replies[0]["text"] == messages.delete_success(sub_id)
     assert db.get_submission(sub_id).status == "deleted"
     assert db.find_by_url(old_url) is None
-    assert bot.calls[0] == {"method": "delete_message", "chat_id": "@archive", "message_id": 555}
+    assert bot.calls[1] == {"method": "delete_message", "chat_id": "@archive", "message_id": 555}
 
     retry = FakeMessage()
     await service.retry_command(

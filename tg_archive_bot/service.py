@@ -189,7 +189,12 @@ class ArchiveBot:
         if not submission:
             await update.message.reply_text(messages.submission_not_found(target))
             return
-        await update.message.reply_text(messages.submission_summary(submission, submission_metadata(submission)))
+        summary = messages.submission_summary(submission, submission_metadata(submission))
+        preview = first_existing_photo(submission.media_paths)
+        if preview:
+            await self.bot.send_photo(chat_id=update.effective_user.id, photo=preview, caption=summary)
+        else:
+            await update.message.reply_text(summary)
 
     async def stats_command(self, update: Any, context: Any = None) -> None:
         if update.effective_user.id not in self.config.admin_ids:
