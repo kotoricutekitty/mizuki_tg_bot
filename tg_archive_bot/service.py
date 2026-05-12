@@ -13,9 +13,11 @@ from . import messages
 from .config import BotConfig
 from .db import Database, Submission
 from .downloader import Downloader
-from .media import MAX_PHOTO_SIZE, MAX_VIDEO_SIZE, media_kind
+from .media import MAX_PHOTO_SIZE, MAX_PUBLISH_PHOTO_SIZE, MAX_VIDEO_SIZE, compress_image, media_kind
 from .safety import ImageSafetyDetector, SafetyDecision, classify_safety
 from .url_utils import extract_urls_from_text, normalize_url
+
+PUBLISH_MEDIA_GROUP_SIZE = 5
 
 
 class Clock(Protocol):
@@ -500,53 +502,29 @@ class ArchiveBot:
         if not media_files:
             logging.error("发布失败: 投稿 #%s 没有媒体", submission_id)
             return None
-        if len(media_files) <= 10:
-            if len(media_files) == 1:
-                sent = await self._send_single_media(
-                    target_channel,
-                    media_files[0],
-                    caption,
-                    parse_mode="HTML",
-                )
-                channel_message_id = getattr(sent, "message_id", None)
-                if channel_message_id:
-                    channel_message_ids.append(int(channel_message_id))
-            else:
-                sent_media = await self.bot.send_media_group(
-                    chat_id=target_channel,
-                    media=build_media_group(media_files[:10], caption, parse_mode="HTML"),
-                )
-                if sent_media:
-                    channel_message_id = getattr(sent_media[0], "message_id", None)
-                    channel_message_ids.extend(
-                        int(message_id)
-                        for message_id in (getattr(message, "message_id", None) for message in sent_media)
-                        if message_id
-                    )
-        else:
-            reply_markup = {"inline_keyboard": [[{"text": "🖼️ 打开完整画廊", "url": submission.url}]]}
-            sent = await self.bot.send_photo(
-                chat_id=target_channel,
-                photo=media_files[0],
-                caption=f"{caption}\n\n📸 共 {len(media_files)} 张图",
+        if len(media_files) == 1:
+            sent = await self._send_single_media(
+                target_channel,
+                media_files[0],
+                caption,
                 parse_mode="HTML",
-                reply_markup=reply_markup,
             )
             channel_message_id = getattr(sent, "message_id", None)
             if channel_message_id:
                 channel_message_ids.append(int(channel_message_id))
-            remaining_media = media_files[1:]
-            total_groups = (len(remaining_media) + 9) // 10
-            work_id = pixiv_work_id(submission.url)
+        else:
+            total_groups = (len(media_files) + PUBLISH_MEDIA_GROUP_SIZE - 1) // PUBLISH_MEDIA_GROUP_SIZE
             for group_idx in range(total_groups):
-                group_files = remaining_media[group_idx * 10 : group_idx * 10 + 10]
-                group_caption = f"Full set {group_idx + 1}/{total_groups}"
-                if work_id:
-                    group_caption += f" — Pixiv {work_id}"
+                group_files = media_files[
+                    group_idx * PUBLISH_MEDIA_GROUP_SIZE : group_idx * PUBLISH_MEDIA_GROUP_SIZE + PUBLISH_MEDIA_GROUP_SIZE
+                ]
+                group_caption = caption
                 sent_media = await self.bot.send_media_group(
                     chat_id=target_channel,
-                    media=build_media_group(group_files, group_caption),
+                    media=build_media_group(group_files, group_caption, parse_mode="HTML", compress_photos=True),
                 )
+                if sent_media and channel_message_id is None:
+                    channel_message_id = getattr(sent_media[0], "message_id", None)
                 channel_message_ids.extend(
                     int(message_id)
                     for message_id in (getattr(message, "message_id", None) for message in sent_media or [])
@@ -1027,15 +1005,32 @@ def command_target(context: Any) -> str:
     return " ".join(str(arg) for arg in args).strip()
 
 
-def build_media_group(media_files: list[str], caption: str, parse_mode: str | None = None) -> list[dict[str, Any]]:
+def build_media_group(
+    media_files: list[str],
+    caption: str,
+    parse_mode: str | None = None,
+    compress_photos: bool = False,
+) -> list[dict[str, Any]]:
     media: list[dict[str, Any]] = []
     for i, file_path in enumerate(media_files):
         kind = media_kind(file_path)
-        item: dict[str, Any] = {"type": kind, "media": file_path, "caption": caption if i == 0 else ""}
+        item: dict[str, Any] = {
+            "type": kind,
+            "media": publish_media_value(file_path) if compress_photos and kind == "photo" else file_path,
+            "caption": caption if i == 0 else "",
+        }
         if i == 0 and parse_mode is not None:
             item["parse_mode"] = parse_mode
         media.append(item)
     return media
+
+
+def publish_media_value(file_path: str) -> Any:
+    if os.path.getsize(file_path) <= MAX_PUBLISH_PHOTO_SIZE:
+        return file_path
+    compressed = compress_image(file_path, max_size=MAX_PUBLISH_PHOTO_SIZE)
+    compressed.name = Path(file_path).with_suffix(".jpg").name
+    return compressed
 
 
 def moderation_reply_markup(submission_id: int, source_key: str) -> dict[str, Any]:

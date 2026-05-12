@@ -52,7 +52,14 @@ class TelegramBotClient:
                     tg_media.append(InputMediaVideo(fh, **kwargs))
                 else:
                     tg_media.append(InputMediaDocument(fh, **kwargs))
-            return await self.bot.send_media_group(chat_id=chat_id, media=tg_media)
+            return await self.bot.send_media_group(
+                chat_id=chat_id,
+                media=tg_media,
+                read_timeout=120,
+                write_timeout=120,
+                connect_timeout=30,
+                pool_timeout=30,
+            )
         finally:
             for fh in opened:
                 if hasattr(fh, "close"):

@@ -592,13 +592,45 @@ async def test_publish_media_variants(app_factory, tmp_path):
     service, db, bot, _ = app_factory()
     sub_id = db.create_submission(user_id=1, username="admin", url="https://pixiv.net/artworks/999", status="approved", media_paths=jpgs, metadata={"canonical_url": "https://pixiv.net/artworks/999"}, now=service.clock.now())
     await service.publish_submission(sub_id, 1)
-    assert bot.calls[0]["method"] == "send_photo"
-    assert "📸 共 12 张图" in bot.calls[0]["caption"]
     groups = [call for call in bot.calls if call["method"] == "send_media_group"]
-    assert len(groups) == 2
-    assert groups[0]["media"][0]["media"] == jpgs[1]
-    assert all(item["media"] != jpgs[0] for group in groups for item in group["media"])
-    assert db.get_submission(sub_id).message_id is not None
+    assert len(groups) == 3
+    assert [item["media"] for item in groups[0]["media"]] == jpgs[:5]
+    assert [item["media"] for item in groups[1]["media"]] == jpgs[5:10]
+    assert [item["media"] for item in groups[2]["media"]] == jpgs[10:]
+    assert groups[0]["media"][0]["caption"] == "\nhttps://pixiv.net/artworks/999"
+    assert groups[0]["media"][0]["parse_mode"] == "HTML"
+    assert groups[1]["media"][0]["caption"] == "\nhttps://pixiv.net/artworks/999"
+    assert groups[1]["media"][0]["parse_mode"] == "HTML"
+    submission = db.get_submission(sub_id)
+    metadata = json.loads(submission.metadata_json)
+    assert submission.message_id == 101
+    assert metadata["channel_message_ids"] == list(range(101, 113))
+
+
+@pytest.mark.asyncio
+async def test_publish_large_images_compresses_channel_media(app_factory, tmp_path, monkeypatch):
+    large = make_image(tmp_path / "large" / "large.jpg")
+    small = make_image(tmp_path / "large" / "small.jpg")
+    monkeypatch.setattr("tg_archive_bot.service.MAX_PUBLISH_PHOTO_SIZE", 1)
+    service, db, bot, _ = app_factory()
+    sub_id = db.create_submission(
+        user_id=1,
+        username="admin",
+        url="https://pixiv.net/artworks/1000",
+        status="approved",
+        media_paths=[large, small],
+        metadata={"canonical_url": "https://pixiv.net/artworks/1000"},
+        now=service.clock.now(),
+    )
+
+    await service.publish_submission(sub_id, 1)
+
+    media = bot.calls[0]["media"]
+    assert media[0]["media"] != large
+    assert hasattr(media[0]["media"], "read")
+    assert media[1]["media"] != small
+    assert hasattr(media[1]["media"], "read")
+    assert db.get_submission(sub_id).media_paths == [large, small]
 
 
 @pytest.mark.asyncio
