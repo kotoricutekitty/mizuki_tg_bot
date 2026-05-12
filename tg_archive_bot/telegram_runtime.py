@@ -14,7 +14,7 @@ from .downloader import GalleryDownloader
 from .http_api import run_http_api
 from .safety import create_image_safety_detector
 from .service import ArchiveBot
-from .twitter_bookmarks import TwitterBookmarkMonitor, XBookmarksClient
+from .twitter_bookmarks import TwitterBookmarkMonitor, XBookmarksClient, XOAuth2TokenRefresher
 
 
 class TelegramBotClient:
@@ -95,12 +95,25 @@ def setup_logging() -> None:
     logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 
+def create_bookmark_token_refresher(config: BotConfig, env_path: Path) -> XOAuth2TokenRefresher | None:
+    if not config.twitter_bookmarks_refresh_token or not config.twitter_oauth_client_id:
+        return None
+    return XOAuth2TokenRefresher(
+        token_url=config.twitter_oauth_token_url,
+        client_id=config.twitter_oauth_client_id,
+        client_secret=config.twitter_oauth_client_secret,
+        refresh_token=config.twitter_bookmarks_refresh_token,
+        env_path=env_path,
+    )
+
+
 async def error_handler(update: object, context: Any) -> None:
     logging.error("Exception while handling an update:", exc_info=context.error)
 
 
 async def main() -> None:
-    load_dotenv()
+    env_path = Path(".env")
+    load_dotenv(env_path)
     setup_logging()
     config = BotConfig.from_env(Path(__file__).resolve().parents[1])
     config.validate_runtime()
@@ -148,6 +161,7 @@ async def main() -> None:
             user_id=config.twitter_bookmarks_user_id,
             access_token=config.twitter_bookmarks_access_token,
             max_results=config.twitter_bookmarks_max_results,
+            token_refresher=create_bookmark_token_refresher(config, env_path),
         )
         bookmark_monitor = TwitterBookmarkMonitor(
             config=config,

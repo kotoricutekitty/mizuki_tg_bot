@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from io import BytesIO
 import urllib.error
+import json
 
 import pytest
 
@@ -12,7 +13,10 @@ from tg_archive_bot import messages
 from tg_archive_bot.http_api import start_bookmarks, start_bookmarks_payload
 from tg_archive_bot.twitter_bookmarks import (
     BookmarkPost,
+    OAuthRefreshResult,
     TwitterBookmarkMonitor,
+    XBookmarksAPIError,
+    XBookmarksClient,
     XCreditsDepletedError,
     parse_x_bookmarks_http_error,
 )
@@ -284,3 +288,68 @@ def test_bookmark_config_defaults_use_requested_poll_window(monkeypatch):
     assert config.twitter_bookmarks_poll_seconds == 30
     assert config.twitter_bookmarks_idle_seconds == 5 * 60
     assert config.twitter_bookmarks_max_results == 10
+
+
+def test_x_bookmarks_client_refreshes_access_token_after_401(monkeypatch):
+    calls = []
+
+    class Refresher:
+        def refresh_access_token(self):
+            return OAuthRefreshResult(access_token="fresh-token", refresh_token="fresh-refresh")
+
+    class Response:
+        def __init__(self, payload):
+            self.payload = payload
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self):
+            return self.payload
+
+    def fake_urlopen(request, timeout):
+        calls.append(request.headers["Authorization"])
+        if len(calls) == 1:
+            raise urllib.error.HTTPError(
+                url=request.full_url,
+                code=401,
+                msg="Unauthorized",
+                hdrs={},
+                fp=BytesIO(b'{"title":"Unauthorized","detail":"Unauthorized"}'),
+            )
+        return Response(json.dumps({"data": [{"id": "42"}]}).encode("utf-8"))
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    client = XBookmarksClient(
+        api_base="https://api.x.com",
+        user_id="123",
+        access_token="expired-token",
+        token_refresher=Refresher(),
+    )
+
+    posts = client._fetch_bookmarks_sync()
+
+    assert posts == [BookmarkPost("42", "https://twitter.com/i/status/42")]
+    assert calls == ["Bearer expired-token", "Bearer fresh-token"]
+
+
+def test_x_bookmarks_client_raises_401_without_refresh(monkeypatch):
+    def fake_urlopen(request, timeout):
+        raise urllib.error.HTTPError(
+            url=request.full_url,
+            code=401,
+            msg="Unauthorized",
+            hdrs={},
+            fp=BytesIO(b'{"title":"Unauthorized","detail":"Unauthorized"}'),
+        )
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    client = XBookmarksClient(api_base="https://api.x.com", user_id="123", access_token="expired-token")
+
+    with pytest.raises(XBookmarksAPIError) as exc:
+        client._fetch_bookmarks_sync()
+
+    assert exc.value.status == 401

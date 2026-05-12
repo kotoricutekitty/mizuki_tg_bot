@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import logging
 import urllib.error
@@ -8,6 +9,7 @@ import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Protocol
 
 from .config import BotConfig
@@ -40,22 +42,53 @@ class XCreditsDepletedError(XBookmarksAPIError):
     pass
 
 
+@dataclass(frozen=True)
+class OAuthRefreshResult:
+    access_token: str
+    refresh_token: str
+
+
+class OAuthTokenRefresher(Protocol):
+    def refresh_access_token(self) -> OAuthRefreshResult:
+        ...
+
+
 class BookmarkClient(Protocol):
     async def fetch_bookmarks(self) -> list[BookmarkPost]:
         ...
 
 
 class XBookmarksClient:
-    def __init__(self, *, api_base: str, user_id: str, access_token: str, max_results: int = 5):
+    def __init__(
+        self,
+        *,
+        api_base: str,
+        user_id: str,
+        access_token: str,
+        max_results: int = 5,
+        token_refresher: OAuthTokenRefresher | None = None,
+    ):
         self.api_base = api_base.rstrip("/")
         self.user_id = user_id
         self.access_token = access_token
         self.max_results = max_results
+        self.token_refresher = token_refresher
 
     async def fetch_bookmarks(self) -> list[BookmarkPost]:
         return await asyncio.to_thread(self._fetch_bookmarks_sync)
 
     def _fetch_bookmarks_sync(self) -> list[BookmarkPost]:
+        try:
+            return self._fetch_bookmarks_once()
+        except XBookmarksAPIError as exc:
+            if exc.status != 401 or not self.token_refresher:
+                raise
+            refreshed = self.token_refresher.refresh_access_token()
+            self.access_token = refreshed.access_token
+            logging.info("Refreshed X OAuth access token after bookmarks API returned 401")
+            return self._fetch_bookmarks_once()
+
+    def _fetch_bookmarks_once(self) -> list[BookmarkPost]:
         query = urllib.parse.urlencode(
             {
                 "max_results": str(self.max_results),
@@ -80,6 +113,61 @@ class XBookmarksClient:
             for item in payload.get("data", [])
             if item.get("id")
         ]
+
+
+class XOAuth2TokenRefresher:
+    def __init__(
+        self,
+        *,
+        token_url: str,
+        client_id: str,
+        client_secret: str = "",
+        refresh_token: str,
+        env_path: Path | None = None,
+    ):
+        self.token_url = token_url
+        self.client_id = client_id
+        self.client_secret = client_secret
+        self.refresh_token = refresh_token
+        self.env_path = env_path
+
+    def refresh_access_token(self) -> OAuthRefreshResult:
+        if not self.client_id or not self.refresh_token:
+            raise RuntimeError("Missing X OAuth client id or refresh token")
+        payload = urllib.parse.urlencode(
+            {
+                "grant_type": "refresh_token",
+                "refresh_token": self.refresh_token,
+                "client_id": self.client_id,
+            }
+        ).encode("utf-8")
+        headers = {
+            "Content-Type": "application/x-www-form-urlencoded",
+            "User-Agent": "tg-archive-bot/0.1",
+        }
+        if self.client_secret:
+            credential = f"{self.client_id}:{self.client_secret}".encode("utf-8")
+            headers["Authorization"] = "Basic " + base64.b64encode(credential).decode("ascii")
+        request = urllib.request.Request(self.token_url, data=payload, headers=headers, method="POST")
+        try:
+            with urllib.request.urlopen(request, timeout=30) as response:
+                data = json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            raise parse_x_bookmarks_http_error(exc) from exc
+        access_token = str(data.get("access_token") or "")
+        refresh_token = str(data.get("refresh_token") or self.refresh_token)
+        if not access_token:
+            raise RuntimeError("X OAuth refresh response did not include an access token")
+        self.refresh_token = refresh_token
+        if self.env_path:
+            update_env_file(
+                self.env_path,
+                {
+                    "TWITTER_BOOKMARKS_ACCESS_TOKEN": access_token,
+                    "TWITTER_BOOKMARKS_REFRESH_TOKEN": refresh_token,
+                },
+            )
+        return OAuthRefreshResult(access_token=access_token, refresh_token=refresh_token)
 
 
 class TwitterBookmarkMonitor:
@@ -223,3 +311,24 @@ def is_credits_depleted(status: int, title: str, detail: str, problem_type: str)
         return False
     haystack = " ".join([title, detail, problem_type]).lower()
     return "creditsdepleted" in haystack or "credits" in haystack
+
+
+def update_env_file(path: Path, updates: dict[str, str]) -> None:
+    lines = path.read_text().splitlines() if path.exists() else []
+    seen: set[str] = set()
+    output: list[str] = []
+    for line in lines:
+        if not line or line.lstrip().startswith("#") or "=" not in line:
+            output.append(line)
+            continue
+        key = line.split("=", 1)[0].strip()
+        if key in updates:
+            output.append(f"{key}={updates[key]}")
+            seen.add(key)
+        else:
+            output.append(line)
+    for key, value in updates.items():
+        if key not in seen:
+            output.append(f"{key}={value}")
+    path.write_text("\n".join(output) + "\n")
+    path.chmod(0o600)

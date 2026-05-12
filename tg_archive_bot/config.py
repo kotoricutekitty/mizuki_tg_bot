@@ -29,6 +29,10 @@ class BotConfig:
     twitter_bookmarks_enabled: bool = False
     twitter_bookmarks_user_id: str = ""
     twitter_bookmarks_access_token: str = ""
+    twitter_bookmarks_refresh_token: str = ""
+    twitter_oauth_client_id: str = ""
+    twitter_oauth_client_secret: str = ""
+    twitter_oauth_token_url: str = "https://api.x.com/2/oauth2/token"
     twitter_bookmarks_poll_seconds: float = 30.0
     twitter_bookmarks_grace_seconds: float = 10.0
     twitter_bookmarks_idle_seconds: float = 5 * 60.0
@@ -63,6 +67,10 @@ class BotConfig:
             twitter_bookmarks_enabled=parse_bool(os.getenv("TWITTER_BOOKMARKS_ENABLED", "false")),
             twitter_bookmarks_user_id=os.getenv("TWITTER_BOOKMARKS_USER_ID", ""),
             twitter_bookmarks_access_token=os.getenv("TWITTER_BOOKMARKS_ACCESS_TOKEN", ""),
+            twitter_bookmarks_refresh_token=os.getenv("TWITTER_BOOKMARKS_REFRESH_TOKEN", ""),
+            twitter_oauth_client_id=os.getenv("TWITTER_OAUTH_CLIENT_ID", os.getenv("TWITTER_CLIENT_ID", "")),
+            twitter_oauth_client_secret=os.getenv("TWITTER_OAUTH_CLIENT_SECRET", os.getenv("TWITTER_CLIENT_SECRET", "")),
+            twitter_oauth_token_url=os.getenv("TWITTER_OAUTH_TOKEN_URL", "https://api.x.com/2/oauth2/token"),
             twitter_bookmarks_poll_seconds=float(os.getenv("TWITTER_BOOKMARKS_POLL_SECONDS", "30")),
             twitter_bookmarks_grace_seconds=float(os.getenv("TWITTER_BOOKMARKS_GRACE_SECONDS", "10")),
             twitter_bookmarks_idle_seconds=float(os.getenv("TWITTER_BOOKMARKS_IDLE_SECONDS", str(5 * 60))),
