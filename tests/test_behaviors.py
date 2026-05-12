@@ -161,14 +161,14 @@ async def test_nsfw_threshold_command(app_factory):
     service, db, _, _ = app_factory(r18_channel="@r18", safety_detector=object())
     status = FakeMessage()
     await service.nsfw_threshold_command(FakeUpdate(FakeUser(1, "admin"), message=status), type("Ctx", (), {"args": []})())
-    assert status.replies[0]["text"] == "📊 当前NSFW阈值喵：low=0.25, high=0.80"
+    assert status.replies[0]["text"] == "📊 当前 anime rating 阈值喵：low=0.25, high=0.80"
 
     updated = FakeMessage()
     await service.nsfw_threshold_command(
         FakeUpdate(FakeUser(1, "admin"), message=updated),
         type("Ctx", (), {"args": ["0.20", "0.70"]})(),
     )
-    assert updated.replies[0]["text"] == "好哒！NSFW阈值已更新喵：low=0.20, high=0.70"
+    assert updated.replies[0]["text"] == "好哒！anime rating 阈值已更新喵：low=0.20, high=0.70"
     assert service.config.nsfw_low_threshold == 0.20
     assert service.config.nsfw_high_threshold == 0.70
     assert dict(db.get_config_rows())["NSFW_LOW_THRESHOLD"] == "0.20"

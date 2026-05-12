@@ -4,7 +4,7 @@ import asyncio
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Callable, Protocol
 
 from .config import BotConfig
 from .media import media_kind
@@ -30,13 +30,14 @@ class NoopImageSafetyDetector:
         return None, 0, None
 
 
-class NudeNetImageSafetyDetector:
-    def __init__(self) -> None:
+class AnimeRatingImageSafetyDetector:
+    def __init__(self, model_name: str = "mobilenetv3_sce_dist") -> None:
         try:
-            from nudenet import NudeDetector
+            from imgutils.validate import anime_rating_score
         except Exception as exc:  # pragma: no cover - depends on optional runtime package
-            raise RuntimeError("nudenet is not installed") from exc
-        self.detector = NudeDetector()
+            raise RuntimeError("dghs-imgutils is not installed") from exc
+        self.model_name = model_name
+        self.anime_rating_score: Callable[..., dict[str, float]] = anime_rating_score
 
     async def score_images(self, image_paths: list[str]) -> tuple[float | None, int, str | None]:
         if not image_paths:
@@ -51,38 +52,14 @@ class NudeNetImageSafetyDetector:
         scores: list[tuple[float, str]] = []
         for image_path in image_paths:
             try:
-                detections = self.detector.detect(image_path)
+                rating_scores = self.anime_rating_score(image_path, model_name=self.model_name)
             except Exception as exc:  # pragma: no cover - model/runtime specific
-                logging.warning("NSFW image detection failed for %s: %s", image_path, exc)
+                logging.warning("Anime rating detection failed for %s: %s", image_path, exc)
                 continue
-            best = max(
-                ((detection_score(item), detection_label(item)) for item in detections),
-                default=(0.0, "none"),
-                key=lambda item: item[0],
-            )
-            scores.append(best)
+            r18_score = float(rating_scores.get("r18") or 0.0)
+            predicted_label, _ = max(rating_scores.items(), default=("none", 0.0), key=lambda item: float(item[1]))
+            scores.append((r18_score, str(predicted_label)))
         return scores
-
-
-def detection_label(item: dict[str, Any]) -> str:
-    return str(item.get("class") or item.get("label") or "none").upper()
-
-
-def detection_score(item: dict[str, Any]) -> float:
-    label = detection_label(item)
-    score = float(item.get("score") or item.get("confidence") or 0.0)
-    adult_labels = (
-        "FEMALE_BREAST_EXPOSED",
-        "FEMALE_GENITALIA_EXPOSED",
-        "MALE_GENITALIA_EXPOSED",
-        "BUTTOCKS_EXPOSED",
-        "ANUS_EXPOSED",
-    )
-    if label in adult_labels:
-        return score
-    if "EXPOSED" in label and not any(part in label for part in ("FACE", "FEET")):
-        return score
-    return 0.0
 
 
 async def classify_safety(
@@ -122,12 +99,12 @@ async def classify_safety(
 
     score, checked_count, class_name = await detector.score_images(image_paths)
     if score is None:
-        return SafetyDecision("uncertain", reason="nsfw detector returned no score", checked_count=checked_count)
+        return SafetyDecision("uncertain", reason="anime rating detector returned no score", checked_count=checked_count)
     if score >= config.nsfw_high_threshold:
-        return SafetyDecision("r18", score=score, class_name=class_name, reason="nsfw score above high threshold", checked_count=checked_count)
+        return SafetyDecision("r18", score=score, class_name=class_name, reason="anime rating r18 score above high threshold", checked_count=checked_count)
     if score <= config.nsfw_low_threshold:
-        return SafetyDecision("safe", score=score, class_name=class_name, reason="nsfw score below low threshold", checked_count=checked_count)
-    return SafetyDecision("uncertain", score=score, class_name=class_name, reason="nsfw score is uncertain", checked_count=checked_count)
+        return SafetyDecision("safe", score=score, class_name=class_name, reason="anime rating r18 score below low threshold", checked_count=checked_count)
+    return SafetyDecision("uncertain", score=score, class_name=class_name, reason="anime rating r18 score is uncertain", checked_count=checked_count)
 
 
 def metadata_r18_reason(metadata: dict[str, Any]) -> str | None:
@@ -175,7 +152,7 @@ def create_image_safety_detector(config: BotConfig) -> ImageSafetyDetector | Non
     if not config.nsfw_detection_enabled:
         return NoopImageSafetyDetector()
     try:
-        return NudeNetImageSafetyDetector()
+        return AnimeRatingImageSafetyDetector(config.anime_rating_model)
     except RuntimeError as exc:
-        logging.warning("NSFW detection enabled but unavailable: %s", exc)
+        logging.warning("Anime rating detection enabled but unavailable: %s", exc)
         return None

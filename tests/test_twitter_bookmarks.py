@@ -42,8 +42,8 @@ def with_bookmark_config(config: BotConfig) -> BotConfig:
         twitter_bookmarks_access_token="token",
         twitter_bookmarks_poll_seconds=30,
         twitter_bookmarks_grace_seconds=10,
-        twitter_bookmarks_idle_seconds=5 * 60,
-        twitter_bookmarks_max_results=10,
+        twitter_bookmarks_idle_seconds=2 * 60,
+        twitter_bookmarks_max_results=5,
     )
 
 
@@ -180,12 +180,40 @@ async def test_bookmark_monitor_activation_and_idle_shutdown(app_factory):
     await monitor.poll_once()
     assert monitor.active
 
-    clock.advance(5 * 60)
+    clock.advance(2 * 60)
     await monitor.poll_once()
     assert not monitor.active
     assert bot.calls[-1]["method"] == "send_message"
     assert bot.calls[-1]["chat_id"] == 1
     assert bot.calls[-1]["text"] == messages.BOOKMARK_WATCH_STOPPED_IDLE
+
+
+@pytest.mark.asyncio
+async def test_duplicate_bookmark_watch_command_only_refreshes_timer(app_factory):
+    service, db, bot, _ = app_factory(admin_ids=(1, 2))
+    clock = FakeClock()
+    client = FakeBookmarkClient([[], []])
+    monitor = monitor_for(service, db, client, clock)
+    service.bookmark_monitor = monitor
+    first_message = FakeMessage()
+    second_message = FakeMessage()
+
+    await service.bookmark_watch_command(FakeUpdate(FakeUser(1, "admin"), message=first_message))
+    clock.advance(60)
+    await service.bookmark_watch_command(FakeUpdate(FakeUser(1, "admin"), message=second_message))
+
+    assert monitor.active
+    assert client.calls == 1
+    assert first_message.replies[0]["text"] == messages.BOOKMARK_WATCH_STARTED
+    assert second_message.replies[0]["text"] == messages.BOOKMARK_WATCH_RESTARTED
+    assert bot.calls == [{"method": "send_message", "chat_id": 2, "text": messages.BOOKMARK_WATCH_STARTED}]
+
+    clock.advance(119)
+    await monitor.poll_once()
+    assert monitor.active
+    clock.advance(1)
+    await monitor.poll_once()
+    assert not monitor.active
 
 
 @pytest.mark.asyncio
@@ -230,6 +258,11 @@ def test_http_bookmark_start_uses_post_token(app_factory):
     assert started.body["status"] == "started"
     assert monitor.active
 
+    restarted = start_bookmarks_payload(service, "api-token")
+    assert restarted.status == 200
+    assert restarted.body["status"] == "restarted"
+    assert monitor.active
+
 
 @pytest.mark.asyncio
 async def test_http_bookmark_start_notifies_admins(app_factory):
@@ -239,8 +272,11 @@ async def test_http_bookmark_start_notifies_admins(app_factory):
     service.bookmark_monitor = monitor
 
     result = await start_bookmarks(service, "api-token")
+    restarted = await start_bookmarks(service, "api-token")
 
     assert result.status == 200
+    assert restarted.status == 200
+    assert restarted.body["status"] == "restarted"
     assert monitor.active
     assert client.calls == 1
     assert bot.calls == [
@@ -280,6 +316,34 @@ async def test_bookmark_monitor_stops_when_x_credits_are_depleted(app_factory):
     assert db.get_bookmark_monitor_state("credits_depleted_at") == clock.now().isoformat()
 
 
+@pytest.mark.asyncio
+async def test_multiple_idle_monitors_send_one_stop_notice(app_factory):
+    service, db, bot, _ = app_factory()
+    clock = FakeClock()
+    twitter = monitor_for(service, db, FakeBookmarkClient([[], []]), clock)
+    pixiv = TwitterBookmarkMonitor(
+        config=with_bookmark_config(service.config),
+        db=db,
+        archive_bot=service,
+        client=FakeBookmarkClient([[], []]),
+        clock=clock,
+        provider="pixiv",
+        label="Pixiv",
+        configured=lambda: True,
+    )
+    twitter.activate()
+    pixiv.activate()
+    await twitter.poll_once()
+    await pixiv.poll_once()
+    clock.advance(2 * 60)
+
+    await twitter.poll_once()
+    await pixiv.poll_once()
+
+    stop_calls = [call for call in bot.calls if call.get("text") == messages.BOOKMARK_WATCH_STOPPED_IDLE]
+    assert len(stop_calls) == 1
+
+
 def test_x_bookmarks_client_maps_credits_depleted_http_error():
     payload = (
         b'{"title":"CreditsDepleted","detail":"Your enrolled account does not have any credits",'
@@ -308,8 +372,8 @@ def test_bookmark_config_defaults_use_requested_poll_window(monkeypatch):
     config = BotConfig.from_env()
 
     assert config.twitter_bookmarks_poll_seconds == 30
-    assert config.twitter_bookmarks_idle_seconds == 5 * 60
-    assert config.twitter_bookmarks_max_results == 10
+    assert config.twitter_bookmarks_idle_seconds == 2 * 60
+    assert config.twitter_bookmarks_max_results == 5
     assert config.twitter_bookmarks_max_pages == 4
 
 
@@ -384,14 +448,14 @@ def test_x_bookmarks_client_adaptive_pagination_stops_at_known_id(monkeypatch):
         return Response(json.dumps(payload).encode("utf-8"))
 
     monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
-    client = XBookmarksClient(api_base="https://api.x.com", user_id="123", access_token="token", max_results=10)
+    client = XBookmarksClient(api_base="https://api.x.com", user_id="123", access_token="token", max_results=5)
 
     posts = client._fetch_bookmarks_until_sync({"98"}, max_pages=4)
 
     assert [post.tweet_id for post in posts] == ["100", "99", "98", "97"]
-    assert "max_results=10" in requested_urls[0]
+    assert "max_results=5" in requested_urls[0]
     assert "pagination_token=next-1" in requested_urls[1]
-    assert "max_results=20" in requested_urls[1]
+    assert "max_results=10" in requested_urls[1]
 
 
 @pytest.mark.asyncio

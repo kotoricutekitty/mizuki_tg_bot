@@ -93,9 +93,11 @@ def test_bookmark_monitor_group_activates_all_configured_monitors():
         def is_configured(self) -> bool:
             return self.configured
 
-        def activate(self) -> None:
+        def activate(self) -> bool:
             self.activations += 1
+            was_active = self.active
             self.active = True
+            return not was_active
 
         async def poll_once(self) -> None:
             self.polls += 1
@@ -105,11 +107,12 @@ def test_bookmark_monitor_group_activates_all_configured_monitors():
     poipiku = StubMonitor("Poipiku", True)
     group = BookmarkMonitorGroup((twitter, pixiv, poipiku))
 
-    group.activate()
+    assert group.activate() is True
 
     assert twitter.activations == 1
     assert pixiv.activations == 0
     assert poipiku.activations == 1
+    assert group.activate() is False
 
 
 @pytest.mark.asyncio
@@ -124,8 +127,10 @@ async def test_bookmark_monitor_group_polls_active_configured_monitors():
         def is_configured(self) -> bool:
             return self.configured
 
-        def activate(self) -> None:
+        def activate(self) -> bool:
+            was_active = self.active
             self.active = True
+            return not was_active
 
         async def poll_once(self) -> None:
             self.polls += 1

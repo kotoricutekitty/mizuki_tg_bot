@@ -54,7 +54,7 @@ class BookmarkActivator(Protocol):
     def is_configured(self) -> bool:
         ...
 
-    def activate(self) -> None:
+    def activate(self) -> bool:
         ...
 
     async def poll_once(self) -> None:
@@ -87,6 +87,7 @@ class ArchiveBot:
         self._moderation_notified_submission_ids: set[int] = set()
         self.bookmark_monitor: BookmarkActivator | None = None
         self._last_error_notifications: dict[str, datetime] = {}
+        self._bookmark_stop_notifications: dict[str, datetime] = {}
 
     async def start(self, update: Any, context: Any = None) -> None:
         await update.message.reply_text(messages.START_TEXT)
@@ -189,7 +190,10 @@ class ArchiveBot:
         if not self.bookmark_monitor or not self.bookmark_monitor.is_configured():
             await update.message.reply_text(messages.BOOKMARK_WATCH_UNAVAILABLE)
             return
-        self.bookmark_monitor.activate()
+        started = self.bookmark_monitor.activate()
+        if not started:
+            await update.message.reply_text(messages.BOOKMARK_WATCH_RESTARTED)
+            return
         await update.message.reply_text(messages.BOOKMARK_WATCH_STARTED)
         await self.notify_bookmark_watch_started(exclude_user_id=update.effective_user.id)
         await self.poll_bookmark_watch_once()
@@ -258,7 +262,9 @@ class ArchiveBot:
     def activate_bookmark_watch(self) -> SubmitResult:
         if not self.bookmark_monitor or not self.bookmark_monitor.is_configured():
             return SubmitResult(503, {"status": "unavailable", "message": "Bookmark monitor is not configured"})
-        self.bookmark_monitor.activate()
+        started = self.bookmark_monitor.activate()
+        if not started:
+            return SubmitResult(200, {"status": "restarted", "message": "Bookmark monitor timer refreshed"})
         return SubmitResult(200, {"status": "started", "message": "Bookmark monitors started"})
 
     async def poll_bookmark_watch_once(self) -> None:
@@ -273,6 +279,11 @@ class ArchiveBot:
             text = messages.BOOKMARK_WATCH_STOPPED_CREDITS
         else:
             text = messages.BOOKMARK_WATCH_STOPPED_IDLE
+        now = self.clock.now()
+        last_notified = self._bookmark_stop_notifications.get(reason)
+        if reason == "idle" and last_notified and now - last_notified < timedelta(seconds=10):
+            return
+        self._bookmark_stop_notifications[reason] = now
         await self._notify_admins(text)
 
     async def _notify_admins(self, text: str, exclude_user_id: int | None = None) -> None:

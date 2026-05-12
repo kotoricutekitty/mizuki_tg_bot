@@ -3,3 +3,4 @@ python-telegram-bot>=20,<22
 aiohttp>=3.9
 Pillow>=10
 beautifulsoup4>=4.12
+dghs-imgutils>=0.19

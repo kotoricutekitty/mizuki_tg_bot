@@ -23,6 +23,7 @@ class BotConfig:
     r18_routing_enabled: bool = False
     r18_channel_id: str = ""
     nsfw_detection_enabled: bool = False
+    anime_rating_model: str = "mobilenetv3_sce_dist"
     nsfw_high_threshold: float = 0.80
     nsfw_low_threshold: float = 0.25
     nsfw_twitter_max_images: int = 4
@@ -36,8 +37,8 @@ class BotConfig:
     twitter_oauth_token_url: str = "https://api.x.com/2/oauth2/token"
     twitter_bookmarks_poll_seconds: float = 30.0
     twitter_bookmarks_grace_seconds: float = 10.0
-    twitter_bookmarks_idle_seconds: float = 5 * 60.0
-    twitter_bookmarks_max_results: int = 10
+    twitter_bookmarks_idle_seconds: float = 2 * 60.0
+    twitter_bookmarks_max_results: int = 5
     twitter_bookmarks_max_pages: int = 4
     twitter_bookmarks_api_base: str = "https://api.x.com"
     pixiv_bookmarks_user_id: str = ""
@@ -70,6 +71,7 @@ class BotConfig:
             r18_routing_enabled=parse_bool(os.getenv("R18_ROUTING_ENABLED", "false")),
             r18_channel_id=os.getenv("R18_CHANNEL_ID", ""),
             nsfw_detection_enabled=parse_bool(os.getenv("NSFW_DETECTION_ENABLED", "false")),
+            anime_rating_model=os.getenv("ANIME_RATING_MODEL", os.getenv("NSFW_MODEL", "mobilenetv3_sce_dist")),
             nsfw_high_threshold=float(os.getenv("NSFW_HIGH_THRESHOLD", "0.80")),
             nsfw_low_threshold=float(os.getenv("NSFW_LOW_THRESHOLD", "0.25")),
             nsfw_twitter_max_images=int(os.getenv("NSFW_TWITTER_MAX_IMAGES", "4")),
@@ -83,8 +85,8 @@ class BotConfig:
             twitter_oauth_token_url=os.getenv("TWITTER_OAUTH_TOKEN_URL", "https://api.x.com/2/oauth2/token"),
             twitter_bookmarks_poll_seconds=float(os.getenv("TWITTER_BOOKMARKS_POLL_SECONDS", "30")),
             twitter_bookmarks_grace_seconds=float(os.getenv("TWITTER_BOOKMARKS_GRACE_SECONDS", "10")),
-            twitter_bookmarks_idle_seconds=float(os.getenv("TWITTER_BOOKMARKS_IDLE_SECONDS", str(5 * 60))),
-            twitter_bookmarks_max_results=int(os.getenv("TWITTER_BOOKMARKS_MAX_RESULTS", "10")),
+            twitter_bookmarks_idle_seconds=float(os.getenv("TWITTER_BOOKMARKS_IDLE_SECONDS", str(2 * 60))),
+            twitter_bookmarks_max_results=int(os.getenv("TWITTER_BOOKMARKS_MAX_RESULTS", "5")),
             twitter_bookmarks_max_pages=int(os.getenv("TWITTER_BOOKMARKS_MAX_PAGES", "4")),
             twitter_bookmarks_api_base=os.getenv("TWITTER_BOOKMARKS_API_BASE", "https://api.x.com"),
             pixiv_bookmarks_user_id=os.getenv("PIXIV_BOOKMARKS_USER_ID", ""),

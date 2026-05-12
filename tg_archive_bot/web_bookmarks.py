@@ -21,7 +21,7 @@ class ActivatableBookmarkMonitor(Protocol):
     def is_configured(self) -> bool:
         ...
 
-    def activate(self) -> None:
+    def activate(self) -> bool:
         ...
 
     async def poll_once(self) -> None:
@@ -35,16 +35,18 @@ class BookmarkMonitorGroup:
     def is_configured(self) -> bool:
         return any(monitor.is_configured() for monitor in self.monitors)
 
-    def activate(self) -> None:
+    def activate(self) -> bool:
         activated: list[str] = []
+        started = False
         for monitor in self.monitors:
             if not monitor.is_configured():
                 continue
-            monitor.activate()
+            started = monitor.activate() or started
             activated.append(monitor.label)
         if not activated:
             raise RuntimeError("No bookmark monitor is configured")
         logging.info("Activated bookmark monitors: %s", ", ".join(activated))
+        return started
 
     async def poll_once(self) -> None:
         for monitor in self.monitors:

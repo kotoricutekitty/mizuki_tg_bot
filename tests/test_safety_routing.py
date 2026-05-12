@@ -65,7 +65,7 @@ async def test_twitter_image_detection_checks_at_most_four_images(app_factory, t
 @pytest.mark.asyncio
 async def test_admin_moderation_notice_after_auto_publish(app_factory, sample_media):
     url = "https://poipiku.com/123/321.html"
-    detector = FakeSafetyDetector([(0.10, "FEMALE_BREAST_EXPOSED")])
+    detector = FakeSafetyDetector([(0.10, "safe")])
     service, db, bot, _ = app_factory(
         {url: ([sample_media["jpg"]], {"canonical_url": url})},
         r18_channel="@r18",
@@ -78,11 +78,11 @@ async def test_admin_moderation_notice_after_auto_publish(app_factory, sample_me
     submission = db.get_submission(result.body["submission_id"])
     metadata = json.loads(submission.metadata_json)
     assert metadata["safety_score"] == 0.10
-    assert metadata["safety_class"] == "FEMALE_BREAST_EXPOSED"
+    assert metadata["safety_class"] == "safe"
     moderation = bot.calls[1]
     assert moderation["method"] == "send_photo"
     assert moderation["chat_id"] == 1
-    assert moderation["caption"] == f"投稿 #{submission.id}\nnudenet score 0.10, FEMALE_BREAST_EXPOSED\n{url}"
+    assert moderation["caption"] == f"投稿 #{submission.id}\nanime rating score 0.10, safe\n{url}"
     buttons = moderation["reply_markup"]["inline_keyboard"][0]
     assert [button["text"] for button in buttons] == [
         "转到色图频道",
@@ -95,7 +95,7 @@ async def test_admin_moderation_notice_after_auto_publish(app_factory, sample_me
 @pytest.mark.asyncio
 async def test_admin_manual_submit_leaves_single_moderation_message(app_factory, sample_media):
     url = "https://poipiku.com/123/654.html"
-    detector = FakeSafetyDetector([(0.10, "FEMALE_BREAST_EXPOSED")])
+    detector = FakeSafetyDetector([(0.10, "safe")])
     service, _, bot, _ = app_factory(
         {url: ([sample_media["jpg"]], {"canonical_url": url})},
         r18_channel="@r18",

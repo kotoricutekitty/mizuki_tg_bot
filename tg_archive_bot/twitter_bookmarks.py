@@ -234,15 +234,20 @@ class TwitterBookmarkMonitor:
             return self.configured()
         return bool(self.config.twitter_bookmarks_user_id and self.config.twitter_bookmarks_access_token)
 
-    def activate(self) -> None:
+    def activate(self) -> bool:
         if not self.is_configured():
             raise RuntimeError(f"{self.label} bookmark monitor is not configured")
         now = self.clock.now()
+        was_active = self.active
         self.active = True
         self.last_activity_at = now
-        self.last_seen_ids = None
+        if not was_active:
+            self.last_seen_ids = None
         self.db.set_bookmark_monitor_state("last_error_code", "", provider=self.provider)
         self.db.set_bookmark_monitor_state("last_error", "", provider=self.provider)
+        if was_active:
+            logging.info("%s bookmark monitor timer refreshed", self.label)
+            return False
         logging.info(
             "%s bookmark monitor activated; poll=%ss grace=%ss idle=%ss",
             self.label,
@@ -250,6 +255,7 @@ class TwitterBookmarkMonitor:
             self.config.twitter_bookmarks_grace_seconds,
             self.config.twitter_bookmarks_idle_seconds,
         )
+        return True
 
     async def run_forever(self) -> None:
         logging.info(

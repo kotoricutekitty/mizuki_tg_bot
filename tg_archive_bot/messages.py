@@ -31,12 +31,8 @@ ADMIN_HELP_TEXT = (
     "/config - 偷看当前配置喵\n"
     "/set <key> <value> - 调整配置喵\n"
     "/pixiv_status - 查看 Pixiv 下载额度喵\n"
-    "/nsfw_threshold <low> <high> - 调整 NSFW 判断阈值喵\n"
+    "/rating_threshold <low> <high> - 调整 anime rating R-18 阈值喵\n"
     "/bookmark_watch - 开始盯 Twitter / Pixiv / Poipiku bookmark 喵\n\n"
-    "/find <id|url> - 查询投稿记录喵\n"
-    "/retry <id|url> - 重新下载/发布投稿喵\n"
-    "/delete <id|url> - 删除投稿并解除查重喵\n"
-    "/stats - 查看投稿统计喵\n\n"
     "频道消息转发给我时，还可以移动频道或删除投稿喵。"
 )
 
@@ -50,8 +46,9 @@ NO_PENDING = "太棒啦！目前没有待审核的投稿喵🥳"
 NO_SUPPORTED_LINK = "呜喵...没有识别到支持的链接喵😿\n直接发送链接/转发带链接的消息都可以哦～"
 PIXIV_RATE_LIMITED = "😿 呜喵...Pixiv下载次数达到上限啦喵！5小时内最多下载100次哦，稍后再试吧～"
 BOOKMARK_WATCH_UNAVAILABLE = "😿 bookmark 监控还没配置好喵，请先设置可用的 Twitter token 或 Pixiv / Poipiku cookie。"
-BOOKMARK_WATCH_STARTED = "✅ bookmark 监控已开启喵！Twitter / Pixiv / Poipiku 中已配置的来源会一起检查，每30秒一次，5分钟没有更新会自动关闭。"
-BOOKMARK_WATCH_STOPPED_IDLE = "⏸ bookmark 监控已自动关闭喵：5分钟没有更新。"
+BOOKMARK_WATCH_STARTED = "✅ bookmark 监控已开启喵！Twitter / Pixiv / Poipiku 中已配置的来源会一起检查，每30秒一次，2分钟没有更新会自动关闭。"
+BOOKMARK_WATCH_RESTARTED = "✅ bookmark 监控已经在运行啦喵，已帮你重新计时。"
+BOOKMARK_WATCH_STOPPED_IDLE = "⏸ bookmark 监控已自动关闭喵：2分钟没有更新。"
 BOOKMARK_WATCH_STOPPED_CREDITS = "⏸ Twitter bookmark 监控已停止喵：X API credits 不足，请补充后再开启。"
 BOOKMARK_WATCH_FORBIDDEN = "呜喵...你没有权限做这个操作喵😾"
 ADMIN_ERROR_PREFIX = "⚠️ Bot 报错喵"
@@ -88,15 +85,15 @@ def pixiv_status(count: int, first_time: str | None, last_time: str | None) -> s
 
 
 def nsfw_threshold_status(low: float, high: float) -> str:
-    return f"📊 当前NSFW阈值喵：low={low:.2f}, high={high:.2f}"
+    return f"📊 当前 anime rating 阈值喵：low={low:.2f}, high={high:.2f}"
 
 
 def nsfw_threshold_usage() -> str:
-    return "用法喵：/nsfw_threshold <low> <high>"
+    return "用法喵：/rating_threshold <low> <high>"
 
 
 def nsfw_threshold_updated(low: float, high: float) -> str:
-    return f"好哒！NSFW阈值已更新喵：low={low:.2f}, high={high:.2f}"
+    return f"好哒！anime rating 阈值已更新喵：low={low:.2f}, high={high:.2f}"
 
 
 def admin_lookup_usage(command: str) -> str:
@@ -121,7 +118,7 @@ def submission_summary(submission, metadata: dict) -> str:
     if metadata.get("channel_id"):
         text += f"频道：{metadata.get('channel_id')}\n"
     if metadata.get("safety_rating"):
-        text += f"NSFW：{metadata.get('safety_rating')} score={metadata.get('safety_score', 'n/a')} class={metadata.get('safety_class', 'n/a')}\n"
+        text += f"Anime Rating：{metadata.get('safety_rating')} r18_score={metadata.get('safety_score', 'n/a')} class={metadata.get('safety_class', 'n/a')}\n"
     if submission.created_at:
         text += f"创建：{submission.created_at}\n"
     if submission.updated_at:
@@ -307,7 +304,7 @@ def moderation_caption(submission_id: int, url: str, metadata: dict) -> str:
     score_text = f"{score:.2f}" if isinstance(score, (int, float)) else "n/a"
     class_text = metadata.get("safety_class") or "n/a"
     text = f"投稿 #{submission_id}\n"
-    text += f"nudenet score {score_text}, {class_text}\n"
+    text += f"anime rating score {score_text}, {class_text}\n"
     text += f"{url}"
     return text
 

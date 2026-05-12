@@ -166,6 +166,7 @@ async def main() -> None:
     application.add_handler(CommandHandler("delete", archive_bot.delete_command))
     application.add_handler(CommandHandler("stats", archive_bot.stats_command))
     application.add_handler(CommandHandler("pixiv_status", archive_bot.pixiv_status_command))
+    application.add_handler(CommandHandler("rating_threshold", archive_bot.nsfw_threshold_command))
     application.add_handler(CommandHandler("nsfw_threshold", archive_bot.nsfw_threshold_command))
     application.add_handler(CommandHandler("bookmark_watch", archive_bot.bookmark_watch_command))
     application.add_handler(MessageHandler(~filters.COMMAND, archive_bot.handle_message))
