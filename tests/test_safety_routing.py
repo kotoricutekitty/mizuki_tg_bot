@@ -82,7 +82,7 @@ async def test_admin_moderation_notice_after_auto_publish(app_factory, sample_me
     moderation = bot.calls[1]
     assert moderation["method"] == "send_photo"
     assert moderation["chat_id"] == 1
-    assert moderation["caption"] == f"投稿 #{submission.id}\nanime rating score 0.10, safe\n{url}"
+    assert moderation["caption"] == f"投稿 #{submission.id}\n色图分数: 0.10, safe\n{url}"
     buttons = moderation["reply_markup"]["inline_keyboard"][0]
     assert [button["text"] for button in buttons] == [
         "转到色图频道",

@@ -304,7 +304,7 @@ def moderation_caption(submission_id: int, url: str, metadata: dict) -> str:
     score_text = f"{score:.2f}" if isinstance(score, (int, float)) else "n/a"
     class_text = metadata.get("safety_class") or "n/a"
     text = f"投稿 #{submission_id}\n"
-    text += f"anime rating score {score_text}, {class_text}\n"
+    text += f"色图分数: {score_text}, {class_text}\n"
     text += f"{url}"
     return text
 
