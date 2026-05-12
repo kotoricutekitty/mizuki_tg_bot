@@ -36,6 +36,11 @@ Optional:
 | `DATABASE_PATH` | SQLite database path |
 | `MEDIA_DIR` | Local media archive path |
 | `TEMP_DIR` | Temporary working directory |
+| `TWITTER_BOOKMARKS_ENABLED` | Enables X/Twitter bookmark monitoring |
+| `TWITTER_BOOKMARKS_USER_ID` | X user ID whose bookmarks are monitored |
+| `TWITTER_BOOKMARKS_ACCESS_TOKEN` | OAuth 2.0 user access token with bookmark read scopes |
+| `TWITTER_BOOKMARKS_POLL_SECONDS` | Bookmark polling interval |
+| `TWITTER_BOOKMARKS_GRACE_SECONDS` | Stability window before a new bookmark becomes a submission |
 
 ## Behavior Notes
 

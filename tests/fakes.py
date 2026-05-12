@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from PIL import Image
+from tg_archive_bot.twitter_bookmarks import BookmarkPost
 
 
 @dataclass
@@ -135,6 +136,25 @@ class FakeClock:
 
     def now(self) -> datetime:
         return self.value
+
+    def advance(self, seconds: float) -> None:
+        from datetime import timedelta
+
+        self.value = self.value + timedelta(seconds=seconds)
+
+
+class FakeBookmarkClient:
+    def __init__(self, snapshots: list[list[BookmarkPost]] | None = None):
+        self.snapshots = snapshots or []
+        self.calls = 0
+
+    async def fetch_bookmarks(self) -> list[BookmarkPost]:
+        if not self.snapshots:
+            self.calls += 1
+            return []
+        index = min(self.calls, len(self.snapshots) - 1)
+        self.calls += 1
+        return self.snapshots[index]
 
 
 def make_image(path: Path, fmt: str = "JPEG") -> str:

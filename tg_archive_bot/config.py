@@ -20,6 +20,12 @@ class BotConfig:
     http_api_port: int = 8080
     pixiv_limit_count: int = 100
     pixiv_limit_hours: int = 5
+    twitter_bookmarks_enabled: bool = False
+    twitter_bookmarks_user_id: str = ""
+    twitter_bookmarks_access_token: str = ""
+    twitter_bookmarks_poll_seconds: float = 5.0
+    twitter_bookmarks_grace_seconds: float = 10.0
+    twitter_bookmarks_api_base: str = "https://api.x.com"
 
     @classmethod
     def from_env(cls, base_dir: Path | None = None) -> "BotConfig":
@@ -40,6 +46,12 @@ class BotConfig:
             http_api_enabled=parse_bool(os.getenv("HTTP_API_ENABLED", "false")),
             http_api_host=os.getenv("HTTP_API_HOST", "0.0.0.0"),
             http_api_port=int(os.getenv("HTTP_API_PORT", "8080")),
+            twitter_bookmarks_enabled=parse_bool(os.getenv("TWITTER_BOOKMARKS_ENABLED", "false")),
+            twitter_bookmarks_user_id=os.getenv("TWITTER_BOOKMARKS_USER_ID", ""),
+            twitter_bookmarks_access_token=os.getenv("TWITTER_BOOKMARKS_ACCESS_TOKEN", ""),
+            twitter_bookmarks_poll_seconds=float(os.getenv("TWITTER_BOOKMARKS_POLL_SECONDS", "5")),
+            twitter_bookmarks_grace_seconds=float(os.getenv("TWITTER_BOOKMARKS_GRACE_SECONDS", "10")),
+            twitter_bookmarks_api_base=os.getenv("TWITTER_BOOKMARKS_API_BASE", "https://api.x.com"),
         )
 
     def validate_runtime(self) -> None:
@@ -52,6 +64,14 @@ class BotConfig:
             missing.append("PUBLISH_CHANNEL_ID")
         if missing:
             raise ValueError("Missing required config: " + ", ".join(missing))
+        if self.twitter_bookmarks_enabled:
+            bookmark_missing = []
+            if not self.twitter_bookmarks_user_id:
+                bookmark_missing.append("TWITTER_BOOKMARKS_USER_ID")
+            if not self.twitter_bookmarks_access_token:
+                bookmark_missing.append("TWITTER_BOOKMARKS_ACCESS_TOKEN")
+            if bookmark_missing:
+                raise ValueError("Missing required Twitter bookmarks config: " + ", ".join(bookmark_missing))
 
 
 def parse_admin_ids(value: str) -> tuple[int, ...]:

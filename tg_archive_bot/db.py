@@ -32,6 +32,19 @@ class Submission:
     updated_at: str | None = None
 
 
+@dataclass
+class BookmarkItem:
+    tweet_id: str
+    url: str
+    status: str
+    first_seen_at: datetime
+    last_seen_at: datetime
+    submitted_at: datetime | None = None
+    removed_at: datetime | None = None
+    submission_id: int | None = None
+    error: str | None = None
+
+
 class Database:
     def __init__(self, path: Path):
         self.path = path
@@ -178,6 +191,104 @@ class Database:
         with self.connect() as conn:
             conn.execute("INSERT INTO pixiv_downloads (request_time, url) VALUES (datetime('now'), ?)", (url,))
 
+    def bookmark_item_count(self) -> int:
+        with self.connect() as conn:
+            row = conn.execute("SELECT COUNT(*) count FROM twitter_bookmark_items").fetchone()
+        return int(row["count"])
+
+    def get_bookmark_monitor_state(self, key: str) -> str | None:
+        with self.connect() as conn:
+            row = conn.execute("SELECT value FROM twitter_bookmark_monitor_state WHERE key = ?", (key,)).fetchone()
+        return row["value"] if row else None
+
+    def set_bookmark_monitor_state(self, key: str, value: str) -> None:
+        with self.connect() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO twitter_bookmark_monitor_state (key, value) VALUES (?, ?)",
+                (key, value),
+            )
+
+    def mark_bookmark_seen(self, tweet_id: str, url: str, now: datetime, initial_status: str = "pending") -> None:
+        with self.connect() as conn:
+            row = conn.execute("SELECT status FROM twitter_bookmark_items WHERE tweet_id = ?", (tweet_id,)).fetchone()
+            if row is None:
+                conn.execute(
+                    """
+                    INSERT INTO twitter_bookmark_items (
+                      tweet_id, url, status, first_seen_at, last_seen_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (tweet_id, url, initial_status, now, now, now),
+                )
+                return
+            if row["status"] == "removed":
+                conn.execute(
+                    """
+                    UPDATE twitter_bookmark_items
+                    SET url = ?, status = 'pending', first_seen_at = ?, last_seen_at = ?,
+                        removed_at = NULL, error = NULL, updated_at = ?
+                    WHERE tweet_id = ?
+                    """,
+                    (url, now, now, now, tweet_id),
+                )
+                return
+            conn.execute(
+                "UPDATE twitter_bookmark_items SET url = ?, last_seen_at = ?, updated_at = ? WHERE tweet_id = ?",
+                (url, now, now, tweet_id),
+            )
+
+    def active_bookmark_items(self) -> list[BookmarkItem]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM twitter_bookmark_items WHERE status IN ('baseline', 'pending')"
+            ).fetchall()
+        return [row_to_bookmark_item(row) for row in rows]
+
+    def pending_bookmark_items(self) -> list[BookmarkItem]:
+        with self.connect() as conn:
+            rows = conn.execute("SELECT * FROM twitter_bookmark_items WHERE status = 'pending'").fetchall()
+        return [row_to_bookmark_item(row) for row in rows]
+
+    def mark_bookmark_removed(self, tweet_id: str, now: datetime) -> None:
+        with self.connect() as conn:
+            conn.execute(
+                """
+                UPDATE twitter_bookmark_items
+                SET status = 'removed', removed_at = ?, updated_at = ?
+                WHERE tweet_id = ? AND status IN ('baseline', 'pending')
+                """,
+                (now, now, tweet_id),
+            )
+
+    def mark_bookmark_submitted(self, tweet_id: str, submission_id: int | None, now: datetime) -> None:
+        with self.connect() as conn:
+            conn.execute(
+                """
+                UPDATE twitter_bookmark_items
+                SET status = 'submitted', submitted_at = ?, submission_id = ?, updated_at = ?, error = NULL
+                WHERE tweet_id = ?
+                """,
+                (now, submission_id, now, tweet_id),
+            )
+
+    def mark_bookmark_duplicate(self, tweet_id: str, submission_id: int | None, now: datetime) -> None:
+        with self.connect() as conn:
+            conn.execute(
+                """
+                UPDATE twitter_bookmark_items
+                SET status = 'duplicate', submitted_at = ?, submission_id = ?, updated_at = ?, error = NULL
+                WHERE tweet_id = ?
+                """,
+                (now, submission_id, now, tweet_id),
+            )
+
+    def mark_bookmark_failed(self, tweet_id: str, error: str, now: datetime) -> None:
+        with self.connect() as conn:
+            conn.execute(
+                "UPDATE twitter_bookmark_items SET status = 'failed', error = ?, updated_at = ? WHERE tweet_id = ?",
+                (error[:1000], now, tweet_id),
+            )
+
 
 def row_to_submission(row: sqlite3.Row) -> Submission:
     data = dict(row)
@@ -205,6 +316,37 @@ def row_to_submission(row: sqlite3.Row) -> Submission:
         metadata_json=data.get("metadata_json"),
         updated_at=str(data.get("updated_at")) if data.get("updated_at") is not None else None,
     )
+
+
+def row_to_bookmark_item(row: sqlite3.Row) -> BookmarkItem:
+    data = dict(row)
+    return BookmarkItem(
+        tweet_id=data["tweet_id"],
+        url=data["url"],
+        status=data["status"],
+        first_seen_at=parse_db_datetime(data["first_seen_at"]),
+        last_seen_at=parse_db_datetime(data["last_seen_at"]),
+        submitted_at=parse_optional_db_datetime(data.get("submitted_at")),
+        removed_at=parse_optional_db_datetime(data.get("removed_at")),
+        submission_id=data.get("submission_id"),
+        error=data.get("error"),
+    )
+
+
+def parse_optional_db_datetime(value: object) -> datetime | None:
+    if value is None:
+        return None
+    return parse_db_datetime(value)
+
+
+def parse_db_datetime(value: object) -> datetime:
+    if isinstance(value, datetime):
+        return value
+    text = str(value)
+    try:
+        return datetime.fromisoformat(text)
+    except ValueError:
+        return datetime.strptime(text, "%Y-%m-%d %H:%M:%S")
 
 
 SCHEMA = """
@@ -240,6 +382,24 @@ CREATE TABLE IF NOT EXISTS pixiv_downloads (
   url TEXT
 );
 
+CREATE TABLE IF NOT EXISTS twitter_bookmark_items (
+  tweet_id TEXT PRIMARY KEY,
+  url TEXT NOT NULL,
+  status TEXT NOT NULL,
+  first_seen_at TIMESTAMP NOT NULL,
+  last_seen_at TIMESTAMP NOT NULL,
+  submitted_at TIMESTAMP,
+  removed_at TIMESTAMP,
+  submission_id INTEGER,
+  error TEXT,
+  updated_at TIMESTAMP NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS twitter_bookmark_monitor_state (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
+
 """
 
 INDEXES = """
@@ -247,4 +407,6 @@ CREATE INDEX IF NOT EXISTS idx_submissions_status ON submissions(status);
 CREATE INDEX IF NOT EXISTS idx_submissions_message_id ON submissions(message_id);
 CREATE INDEX IF NOT EXISTS idx_submissions_normalized_url ON submissions(normalized_url);
 CREATE INDEX IF NOT EXISTS idx_pixiv_downloads_request_time ON pixiv_downloads(request_time);
+CREATE INDEX IF NOT EXISTS idx_twitter_bookmark_items_status ON twitter_bookmark_items(status);
+CREATE INDEX IF NOT EXISTS idx_twitter_bookmark_items_first_seen ON twitter_bookmark_items(first_seen_at);
 """

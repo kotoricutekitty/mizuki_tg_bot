@@ -410,6 +410,32 @@ class ArchiveBot:
             },
         )
 
+    async def submit_url_as_admin(self, url: str, username: str = "bookmark_monitor") -> tuple[str, int | None]:
+        normalized_url = normalize_url(url)
+        existing = self.db.find_by_url(normalized_url)
+        if existing:
+            return "duplicate", existing.id
+        media_files, metadata = await self.downloader.download_media(normalized_url)
+        if not media_files:
+            return "download_failed", None
+        admin_id = self.config.admin_ids[0] if self.config.admin_ids else 0
+        submission_id = self.db.create_submission(
+            user_id=admin_id,
+            username=username,
+            url=normalized_url,
+            status="approved",
+            media_paths=media_files,
+            metadata=metadata,
+            now=self.clock.now(),
+        )
+        await self.publish_submission(submission_id, admin_id)
+        for admin in self.config.admin_ids:
+            try:
+                await self.bot.send_message(admin, messages.api_notify(submission_id, normalized_url, metadata))
+            except Exception as exc:
+                logging.warning("无法通知管理员 %s: %s", admin, exc)
+        return "submitted", submission_id
+
 
 def collect_message_text(message: Any) -> str:
     text = ""

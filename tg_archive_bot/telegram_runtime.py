@@ -13,6 +13,7 @@ from .db import Database
 from .downloader import GalleryDownloader
 from .http_api import run_http_api
 from .service import ArchiveBot
+from .twitter_bookmarks import TwitterBookmarkMonitor, XBookmarksClient
 
 
 class TelegramBotClient:
@@ -125,15 +126,35 @@ async def main() -> None:
     await application.updater.start_polling()
 
     runner = None
+    bookmark_task = None
     if config.http_api_enabled:
         runner = await run_http_api(archive_bot, config.http_api_host, config.http_api_port)
         logging.info("HTTP API listening on %s:%s", config.http_api_host, config.http_api_port)
+    if config.twitter_bookmarks_enabled:
+        bookmark_client = XBookmarksClient(
+            api_base=config.twitter_bookmarks_api_base,
+            user_id=config.twitter_bookmarks_user_id,
+            access_token=config.twitter_bookmarks_access_token,
+        )
+        bookmark_monitor = TwitterBookmarkMonitor(
+            config=config,
+            db=db,
+            archive_bot=archive_bot,
+            client=bookmark_client,
+        )
+        bookmark_task = asyncio.create_task(bookmark_monitor.run_forever())
     logging.info("Bot started successfully!")
 
     try:
         while True:
             await asyncio.sleep(3600)
     finally:
+        if bookmark_task:
+            bookmark_task.cancel()
+            try:
+                await bookmark_task
+            except asyncio.CancelledError:
+                pass
         if runner:
             await runner.cleanup()
         await application.updater.stop()
