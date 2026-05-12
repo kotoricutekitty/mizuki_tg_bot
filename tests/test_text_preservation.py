@@ -58,3 +58,12 @@ def test_publish_caption_preserved():
         text="hello\nworld",
         canonical_url="https://x.com/a/status/1",
     ) == "<b>作者</b>: 「hello world」\nhttps://x.com/a/status/1"
+
+
+def test_publish_caption_strips_html_breaks():
+    assert messages.publish_caption(
+        "https://www.pixiv.net/artworks/129104622",
+        author_name="反町豆腐",
+        text="Twitterに投稿したもののまとめ<br />(えなみずっぽいものもある)",
+        canonical_url="https://www.pixiv.net/artworks/129104622",
+    ) == "<b>反町豆腐</b>: 「Twitterに投稿したもののまとめ (えなみずっぽいものもある)」\nhttps://www.pixiv.net/artworks/129104622"

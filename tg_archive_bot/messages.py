@@ -2,7 +2,8 @@ from __future__ import annotations
 
 """User-visible text preserved from the original bot."""
 
-from html import escape
+import re
+from html import escape, unescape
 
 START_TEXT = (
     "欢迎使用 mizuki bot 喵～！\n\n"
@@ -234,7 +235,7 @@ def publish_caption(
     caption = ""
     content_part = ""
     if text:
-        cleaned_text = text.replace("\n", " ").replace("\r", "").strip()
+        cleaned_text = clean_caption_text(text)
         content_part = f"「{escape(cleaned_text)}」"
     if author_name:
         caption += f"<b>{escape(author_name)}</b>: {content_part}"
@@ -246,6 +247,15 @@ def publish_caption(
     else:
         caption += f"{escape(url)}"
     return caption
+
+
+def clean_caption_text(text: str) -> str:
+    cleaned = unescape(text)
+    cleaned = re.sub(r"<br\s*/?>", " ", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"<[^>]+>", "", cleaned)
+    cleaned = cleaned.replace("\n", " ").replace("\r", " ")
+    cleaned = re.sub(r"\s+", " ", cleaned)
+    return cleaned.strip()
 
 
 def callback_no_permission(existing_caption: str) -> str:
