@@ -121,15 +121,26 @@ async def test_pending_command_lists_and_empty_state(app_factory, sample_media):
         metadata={},
         now=service.clock.now(),
     )
+    db.create_submission(
+        user_id=3,
+        username="same-preview",
+        url="https://twitter.com/u/status/45",
+        status="pending",
+        media_paths=[sample_media["jpg"]],
+        metadata={},
+        now=service.clock.now(),
+    )
     listed = FakeMessage()
     await service.pending_command(FakeUpdate(FakeUser(1, "admin"), message=listed))
     assert listed.replies[0]["text"] == "📝 待审核列表喵：\n"
-    assert bot.calls[-1]["method"] == "send_photo"
-    assert bot.calls[-1]["chat_id"] == 1
-    assert bot.calls[-1]["photo"] == sample_media["jpg"]
-    assert bot.calls[-1]["caption"] == "#1 - normal (2) - https://twitter.com/u/status/44"
-    assert bot.calls[-1]["reply_markup"]["inline_keyboard"][0][0]["text"] == messages.APPROVE_BUTTON
-    assert bot.calls[-1]["reply_markup"]["inline_keyboard"][0][1]["text"] == messages.REJECT_BUTTON
+    assert bot.calls[-2]["method"] == "send_photo"
+    assert bot.calls[-2]["chat_id"] == 1
+    assert bot.calls[-2]["photo"] == sample_media["jpg"]
+    assert bot.calls[-2]["caption"] == "#1 - normal (2) - https://twitter.com/u/status/44"
+    assert bot.calls[-2]["reply_markup"]["inline_keyboard"][0][0]["text"] == messages.APPROVE_BUTTON
+    assert bot.calls[-2]["reply_markup"]["inline_keyboard"][0][1]["text"] == messages.REJECT_BUTTON
+    assert bot.calls[-1]["method"] == "send_message"
+    assert bot.calls[-1]["text"] == "#2 - same-preview (3) - https://twitter.com/u/status/45"
 
 
 @pytest.mark.asyncio
@@ -583,6 +594,8 @@ async def test_publish_media_variants(app_factory, tmp_path):
     assert "📸 共 12 张图" in bot.calls[0]["caption"]
     groups = [call for call in bot.calls if call["method"] == "send_media_group"]
     assert len(groups) == 2
+    assert groups[0]["media"][0]["media"] == jpgs[1]
+    assert all(item["media"] != jpgs[0] for group in groups for item in group["media"])
     assert db.get_submission(sub_id).message_id is not None
 
 

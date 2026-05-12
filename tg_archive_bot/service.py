@@ -78,6 +78,7 @@ class ArchiveBot:
         self.bot = bot
         self.clock = clock or SystemClock()
         self.safety_detector = safety_detector
+        self._last_preview_by_chat: dict[int | str, str | None] = {}
         self.bookmark_monitor: BookmarkActivator | None = None
         self._last_error_notifications: dict[str, datetime] = {}
 
@@ -514,10 +515,11 @@ class ArchiveBot:
             channel_message_id = getattr(sent, "message_id", None)
             if channel_message_id:
                 channel_message_ids.append(int(channel_message_id))
-            total_groups = (len(media_files) + 9) // 10
+            remaining_media = media_files[1:]
+            total_groups = (len(remaining_media) + 9) // 10
             work_id = pixiv_work_id(submission.url)
             for group_idx in range(total_groups):
-                group_files = media_files[group_idx * 10 : group_idx * 10 + 10]
+                group_files = remaining_media[group_idx * 10 : group_idx * 10 + 10]
                 group_caption = f"Full set {group_idx + 1}/{total_groups}"
                 if work_id:
                     group_caption += f" — Pixiv {work_id}"
@@ -562,8 +564,10 @@ class ArchiveBot:
                         caption=caption,
                         reply_markup=reply_markup,
                     )
+                    self.note_preview_message(admin_id, preview)
                 else:
                     await self.bot.send_message(admin_id, caption, reply_markup=reply_markup)
+                    self.note_text_message(admin_id)
             except Exception as exc:
                 logging.warning("无法给管理员%s发送投稿检测消息: %s", admin_id, exc)
 
@@ -584,8 +588,12 @@ class ArchiveBot:
             kwargs["parse_mode"] = parse_mode
         if kind == "photo":
             if file_size <= MAX_PHOTO_SIZE:
-                return await self.bot.send_photo(chat_id=chat_id, photo=file_path, **kwargs)
-            return await self.bot.send_photo(chat_id=chat_id, photo=file_path, **kwargs)
+                sent = await self.bot.send_photo(chat_id=chat_id, photo=file_path, **kwargs)
+                self.note_preview_message(chat_id, file_path)
+                return sent
+            sent = await self.bot.send_photo(chat_id=chat_id, photo=file_path, **kwargs)
+            self.note_preview_message(chat_id, file_path)
+            return sent
         if kind == "video":
             if file_size <= MAX_VIDEO_SIZE:
                 return await self.bot.send_video(chat_id=chat_id, video=file_path, **kwargs)
@@ -760,9 +768,22 @@ class ArchiveBot:
 
     async def send_submission_message(self, chat_id: int | str, submission: Submission, text: str, **kwargs: Any) -> Any:
         preview = first_existing_photo(submission.media_paths)
-        if preview:
-            return await self.bot.send_photo(chat_id=chat_id, photo=preview, caption=text, **kwargs)
-        return await self.bot.send_message(chat_id, text, **kwargs)
+        if preview and self.should_send_preview(chat_id, preview):
+            sent = await self.bot.send_photo(chat_id=chat_id, photo=preview, caption=text, **kwargs)
+            self.note_preview_message(chat_id, preview)
+            return sent
+        sent = await self.bot.send_message(chat_id, text, **kwargs)
+        self.note_text_message(chat_id)
+        return sent
+
+    def should_send_preview(self, chat_id: int | str, preview: str) -> bool:
+        return self._last_preview_by_chat.get(chat_id) != preview
+
+    def note_preview_message(self, chat_id: int | str, preview: str) -> None:
+        self._last_preview_by_chat[chat_id] = preview
+
+    def note_text_message(self, chat_id: int | str) -> None:
+        self._last_preview_by_chat[chat_id] = None
 
     async def move_published_submission(
         self,

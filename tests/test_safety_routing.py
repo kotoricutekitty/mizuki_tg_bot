@@ -89,6 +89,9 @@ async def test_admin_moderation_notice_after_auto_publish(app_factory, sample_me
         "转到不色频道",
         "删除推文",
     ]
+    assert bot.calls[2]["method"] == "send_message"
+    assert bot.calls[2]["chat_id"] == 1
+    assert bot.calls[2]["text"].startswith("📥 收到API投稿啦喵！")
 
 
 @pytest.mark.asyncio
