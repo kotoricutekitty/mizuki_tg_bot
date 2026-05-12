@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
@@ -18,6 +19,25 @@ from .service import ArchiveBot, Clock, SystemClock
 class BookmarkPost:
     tweet_id: str
     url: str
+
+
+class XBookmarksAPIError(RuntimeError):
+    def __init__(self, *, status: int, title: str = "", detail: str = "", problem_type: str = "", body: str = ""):
+        self.status = status
+        self.title = title
+        self.detail = detail
+        self.problem_type = problem_type
+        self.body = body
+        message = f"X bookmarks API returned HTTP {status}"
+        if title:
+            message += f" ({title})"
+        if detail:
+            message += f": {detail}"
+        super().__init__(message)
+
+
+class XCreditsDepletedError(XBookmarksAPIError):
+    pass
 
 
 class BookmarkClient(Protocol):
@@ -50,8 +70,11 @@ class XBookmarksClient:
                 "User-Agent": "tg-archive-bot/0.1",
             },
         )
-        with urllib.request.urlopen(request, timeout=30) as response:
-            payload = json.loads(response.read().decode("utf-8"))
+        try:
+            with urllib.request.urlopen(request, timeout=30) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            raise parse_x_bookmarks_http_error(exc) from exc
         return [
             BookmarkPost(tweet_id=str(item["id"]), url=f"https://twitter.com/i/status/{item['id']}")
             for item in payload.get("data", [])
@@ -88,6 +111,8 @@ class TwitterBookmarkMonitor:
         self.active = True
         self.last_activity_at = now
         self.last_seen_ids = None
+        self.db.set_bookmark_monitor_state("last_error_code", "")
+        self.db.set_bookmark_monitor_state("last_error", "")
         logging.info(
             "Twitter bookmark monitor activated; poll=%ss grace=%ss idle=%ss",
             self.config.twitter_bookmarks_poll_seconds,
@@ -114,8 +139,16 @@ class TwitterBookmarkMonitor:
             await asyncio.sleep(self.config.twitter_bookmarks_poll_seconds)
 
     async def poll_once(self) -> None:
-        posts = await self.client.fetch_bookmarks()
         now = self.clock.now()
+        try:
+            posts = await self.client.fetch_bookmarks()
+        except XCreditsDepletedError as exc:
+            self.active = False
+            self.db.set_bookmark_monitor_state("last_error_code", "credits_depleted")
+            self.db.set_bookmark_monitor_state("last_error", str(exc))
+            self.db.set_bookmark_monitor_state("credits_depleted_at", now.isoformat())
+            logging.error("Twitter bookmark monitor stopped because X API credits are depleted: %s", exc)
+            return
         current_ids = {post.tweet_id for post in posts}
         changed = self.last_seen_ids is None or current_ids != self.last_seen_ids
         if changed:
@@ -168,3 +201,23 @@ class TwitterBookmarkMonitor:
         if self.last_activity_at and now - self.last_activity_at >= timedelta(seconds=self.config.twitter_bookmarks_idle_seconds):
             self.active = False
             logging.info("Twitter bookmark monitor auto-stopped after idle timeout")
+
+
+def parse_x_bookmarks_http_error(exc: urllib.error.HTTPError) -> XBookmarksAPIError:
+    raw_body = exc.read().decode("utf-8", errors="replace")
+    try:
+        payload = json.loads(raw_body)
+    except json.JSONDecodeError:
+        payload = {}
+    title = str(payload.get("title") or "")
+    detail = str(payload.get("detail") or "")
+    problem_type = str(payload.get("type") or "")
+    error_cls = XCreditsDepletedError if is_credits_depleted(exc.code, title, detail, problem_type) else XBookmarksAPIError
+    return error_cls(status=exc.code, title=title, detail=detail, problem_type=problem_type, body=raw_body)
+
+
+def is_credits_depleted(status: int, title: str, detail: str, problem_type: str) -> bool:
+    if status != 402:
+        return False
+    haystack = " ".join([title, detail, problem_type]).lower()
+    return "creditsdepleted" in haystack or "credits" in haystack

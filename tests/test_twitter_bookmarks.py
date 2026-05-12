@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from io import BytesIO
+import urllib.error
+
 import pytest
 
 from tests.fakes import FakeBookmarkClient, FakeClock
@@ -7,7 +10,12 @@ from tests.fakes import FakeMessage, FakeUpdate, FakeUser
 from tg_archive_bot.config import BotConfig
 from tg_archive_bot import messages
 from tg_archive_bot.http_api import start_bookmarks_payload
-from tg_archive_bot.twitter_bookmarks import BookmarkPost, TwitterBookmarkMonitor
+from tg_archive_bot.twitter_bookmarks import (
+    BookmarkPost,
+    TwitterBookmarkMonitor,
+    XCreditsDepletedError,
+    parse_x_bookmarks_http_error,
+)
 
 
 def with_bookmark_config(config: BotConfig) -> BotConfig:
@@ -194,3 +202,51 @@ def test_http_bookmark_start_uses_post_token(app_factory):
     assert started.status == 200
     assert started.body["status"] == "started"
     assert monitor.active
+
+
+@pytest.mark.asyncio
+async def test_bookmark_monitor_stops_when_x_credits_are_depleted(app_factory):
+    service, db, bot, downloader = app_factory()
+    clock = FakeClock()
+
+    class CreditDepletedClient:
+        async def fetch_bookmarks(self):
+            raise XCreditsDepletedError(
+                status=402,
+                title="CreditsDepleted",
+                detail="Your enrolled account does not have any credits to fulfill this request.",
+                problem_type="https://api.twitter.com/2/problems/credits",
+            )
+
+    monitor = monitor_for(service, db, CreditDepletedClient(), clock)
+    monitor.activate()
+
+    await monitor.poll_once()
+
+    assert not monitor.active
+    assert downloader.calls == []
+    assert bot.calls == []
+    assert db.bookmark_item_count() == 0
+    assert db.get_bookmark_monitor_state("last_error_code") == "credits_depleted"
+    assert "CreditsDepleted" in db.get_bookmark_monitor_state("last_error")
+    assert db.get_bookmark_monitor_state("credits_depleted_at") == clock.now().isoformat()
+
+
+def test_x_bookmarks_client_maps_credits_depleted_http_error():
+    payload = (
+        b'{"title":"CreditsDepleted","detail":"Your enrolled account does not have any credits",'
+        b'"type":"https://api.twitter.com/2/problems/credits"}'
+    )
+    error = urllib.error.HTTPError(
+        url="https://api.x.com/2/users/123/bookmarks",
+        code=402,
+        msg="Payment Required",
+        hdrs={},
+        fp=BytesIO(payload),
+    )
+
+    parsed = parse_x_bookmarks_http_error(error)
+
+    assert isinstance(parsed, XCreditsDepletedError)
+    assert parsed.status == 402
+    assert parsed.title == "CreditsDepleted"
