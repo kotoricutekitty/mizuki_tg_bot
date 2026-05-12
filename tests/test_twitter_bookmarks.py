@@ -289,6 +289,7 @@ def test_bookmark_config_defaults_use_requested_poll_window(monkeypatch):
     assert config.twitter_bookmarks_poll_seconds == 30
     assert config.twitter_bookmarks_idle_seconds == 5 * 60
     assert config.twitter_bookmarks_max_results == 10
+    assert config.twitter_bookmarks_max_pages == 4
 
 
 def test_x_bookmarks_client_refreshes_access_token_after_401(monkeypatch):
@@ -335,6 +336,74 @@ def test_x_bookmarks_client_refreshes_access_token_after_401(monkeypatch):
 
     assert posts == [BookmarkPost("42", "https://twitter.com/i/status/42")]
     assert calls == ["Bearer expired-token", "Bearer fresh-token"]
+
+
+def test_x_bookmarks_client_adaptive_pagination_stops_at_known_id(monkeypatch):
+    requested_urls = []
+
+    class Response:
+        def __init__(self, payload):
+            self.payload = payload
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self):
+            return self.payload
+
+    def fake_urlopen(request, timeout):
+        requested_urls.append(request.full_url)
+        if len(requested_urls) == 1:
+            payload = {"data": [{"id": "100"}, {"id": "99"}], "meta": {"next_token": "next-1"}}
+        else:
+            payload = {"data": [{"id": "98"}, {"id": "97"}]}
+        return Response(json.dumps(payload).encode("utf-8"))
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    client = XBookmarksClient(api_base="https://api.x.com", user_id="123", access_token="token", max_results=10)
+
+    posts = client._fetch_bookmarks_until_sync({"98"}, max_pages=4)
+
+    assert [post.tweet_id for post in posts] == ["100", "99", "98", "97"]
+    assert "max_results=10" in requested_urls[0]
+    assert "pagination_token=next-1" in requested_urls[1]
+    assert "max_results=20" in requested_urls[1]
+
+
+@pytest.mark.asyncio
+async def test_bookmark_monitor_uses_adaptive_pagination_with_known_ids(app_factory):
+    service, db, _, _ = app_factory()
+    clock = FakeClock()
+    db.mark_bookmark_seen("98", "https://twitter.com/i/status/98", clock.now(), initial_status="baseline")
+
+    class AdaptiveClient:
+        def __init__(self):
+            self.stop_ids = None
+            self.max_pages = None
+
+        async def fetch_bookmarks_until(self, stop_ids, max_pages):
+            self.stop_ids = set(stop_ids)
+            self.max_pages = max_pages
+            return [
+                BookmarkPost("100", "https://twitter.com/i/status/100"),
+                BookmarkPost("98", "https://twitter.com/i/status/98"),
+            ]
+
+        async def fetch_bookmarks(self):
+            raise AssertionError("adaptive client should be used")
+
+    client = AdaptiveClient()
+    monitor = monitor_for(service, db, client, clock)
+    monitor.activate()
+    db.set_bookmark_monitor_state("bootstrapped", "1")
+
+    await monitor.poll_once()
+
+    assert client.stop_ids == {"98"}
+    assert client.max_pages == 4
 
 
 def test_x_bookmarks_client_raises_401_without_refresh(monkeypatch):

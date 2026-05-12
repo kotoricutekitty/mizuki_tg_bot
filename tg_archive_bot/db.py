@@ -242,6 +242,11 @@ class Database:
             row = conn.execute("SELECT COUNT(*) count FROM twitter_bookmark_items").fetchone()
         return int(row["count"])
 
+    def known_bookmark_ids(self) -> set[str]:
+        with self.connect() as conn:
+            rows = conn.execute("SELECT tweet_id FROM twitter_bookmark_items").fetchall()
+        return {str(row["tweet_id"]) for row in rows}
+
     def get_bookmark_monitor_state(self, key: str) -> str | None:
         with self.connect() as conn:
             row = conn.execute("SELECT value FROM twitter_bookmark_monitor_state WHERE key = ?", (key,)).fetchone()

@@ -23,6 +23,12 @@ class BookmarkPost:
     url: str
 
 
+@dataclass(frozen=True)
+class BookmarkPage:
+    posts: list[BookmarkPost]
+    next_token: str | None = None
+
+
 class XBookmarksAPIError(RuntimeError):
     def __init__(self, *, status: int, title: str = "", detail: str = "", problem_type: str = "", body: str = ""):
         self.status = status
@@ -77,24 +83,49 @@ class XBookmarksClient:
     async def fetch_bookmarks(self) -> list[BookmarkPost]:
         return await asyncio.to_thread(self._fetch_bookmarks_sync)
 
+    async def fetch_bookmarks_until(self, stop_ids: set[str], max_pages: int = 4) -> list[BookmarkPost]:
+        return await asyncio.to_thread(self._fetch_bookmarks_until_sync, stop_ids, max_pages)
+
     def _fetch_bookmarks_sync(self) -> list[BookmarkPost]:
+        return self._fetch_bookmarks_with_refresh(lambda: self._fetch_bookmarks_page().posts)
+
+    def _fetch_bookmarks_until_sync(self, stop_ids: set[str], max_pages: int = 4) -> list[BookmarkPost]:
+        def fetch_pages() -> list[BookmarkPost]:
+            all_posts: list[BookmarkPost] = []
+            pagination_token: str | None = None
+            page_size = self.max_results
+            for _ in range(max(1, max_pages)):
+                page = self._fetch_bookmarks_page(max_results=page_size, pagination_token=pagination_token)
+                all_posts.extend(page.posts)
+                if any(post.tweet_id in stop_ids for post in page.posts):
+                    break
+                if not page.next_token:
+                    break
+                pagination_token = page.next_token
+                page_size = min(max(page_size * 2, page_size + 1), 100)
+            return all_posts
+
+        return self._fetch_bookmarks_with_refresh(fetch_pages)
+
+    def _fetch_bookmarks_with_refresh(self, fetcher):
         try:
-            return self._fetch_bookmarks_once()
+            return fetcher()
         except XBookmarksAPIError as exc:
             if exc.status != 401 or not self.token_refresher:
                 raise
             refreshed = self.token_refresher.refresh_access_token()
             self.access_token = refreshed.access_token
             logging.info("Refreshed X OAuth access token after bookmarks API returned 401")
-            return self._fetch_bookmarks_once()
+            return fetcher()
 
-    def _fetch_bookmarks_once(self) -> list[BookmarkPost]:
-        query = urllib.parse.urlencode(
-            {
-                "max_results": str(self.max_results),
-                "tweet.fields": "created_at,author_id",
-            }
-        )
+    def _fetch_bookmarks_page(self, max_results: int | None = None, pagination_token: str | None = None) -> BookmarkPage:
+        query_args = {
+            "max_results": str(max_results or self.max_results),
+            "tweet.fields": "created_at,author_id",
+        }
+        if pagination_token:
+            query_args["pagination_token"] = pagination_token
+        query = urllib.parse.urlencode(query_args)
         url = f"{self.api_base}/2/users/{urllib.parse.quote(self.user_id)}/bookmarks?{query}"
         request = urllib.request.Request(
             url,
@@ -108,11 +139,13 @@ class XBookmarksClient:
                 payload = json.loads(response.read().decode("utf-8"))
         except urllib.error.HTTPError as exc:
             raise parse_x_bookmarks_http_error(exc) from exc
-        return [
+        posts = [
             BookmarkPost(tweet_id=str(item["id"]), url=f"https://twitter.com/i/status/{item['id']}")
             for item in payload.get("data", [])
             if item.get("id")
         ]
+        next_token = payload.get("meta", {}).get("next_token")
+        return BookmarkPage(posts=posts, next_token=str(next_token) if next_token else None)
 
 
 class XOAuth2TokenRefresher:
@@ -188,6 +221,7 @@ class TwitterBookmarkMonitor:
         self.active = False
         self.last_activity_at: datetime | None = None
         self.last_seen_ids: set[str] | None = None
+        self.last_fetch_adaptive = False
 
     def is_configured(self) -> bool:
         return bool(self.config.twitter_bookmarks_user_id and self.config.twitter_bookmarks_access_token)
@@ -234,7 +268,7 @@ class TwitterBookmarkMonitor:
     async def poll_once(self) -> None:
         now = self.clock.now()
         try:
-            posts = await self.client.fetch_bookmarks()
+            posts = await self.fetch_bookmark_posts()
         except XCreditsDepletedError as exc:
             self.active = False
             self.db.set_bookmark_monitor_state("last_error_code", "credits_depleted")
@@ -258,6 +292,7 @@ class TwitterBookmarkMonitor:
                 throttle_key=f"bookmark_poll:{type(exc).__name__}:{str(exc)[:120]}",
             )
             return
+        previous_seen_ids = self.last_seen_ids
         current_ids = {post.tweet_id for post in posts}
         changed = self.last_seen_ids is None or current_ids != self.last_seen_ids
         if changed:
@@ -270,6 +305,8 @@ class TwitterBookmarkMonitor:
             self.db.mark_bookmark_seen(post.tweet_id, post.url, now, initial_status=initial_status)
 
         for item in self.db.active_bookmark_items():
+            if self.last_fetch_adaptive and previous_seen_ids is not None and item.tweet_id not in previous_seen_ids:
+                continue
             if item.tweet_id not in current_ids:
                 self.db.mark_bookmark_removed(item.tweet_id, now)
                 changed = True
@@ -317,6 +354,19 @@ class TwitterBookmarkMonitor:
             self.active = False
             logging.info("Twitter bookmark monitor auto-stopped after idle timeout")
             await self.archive_bot.notify_bookmark_watch_stopped("idle")
+
+    async def fetch_bookmark_posts(self) -> list[BookmarkPost]:
+        fetch_until = getattr(self.client, "fetch_bookmarks_until", None)
+        if not callable(fetch_until):
+            self.last_fetch_adaptive = False
+            return await self.client.fetch_bookmarks()
+        known_ids = self.db.known_bookmark_ids()
+        if self.last_seen_ids:
+            known_ids.update(self.last_seen_ids)
+        posts = await fetch_until(known_ids, self.config.twitter_bookmarks_max_pages)
+        self.last_fetch_adaptive = True
+        logging.info("Twitter bookmark monitor fetched %s bookmarks with adaptive pagination", len(posts))
+        return posts
 
 
 def parse_x_bookmarks_http_error(exc: urllib.error.HTTPError) -> XBookmarksAPIError:

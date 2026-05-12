@@ -37,6 +37,7 @@ class BotConfig:
     twitter_bookmarks_grace_seconds: float = 10.0
     twitter_bookmarks_idle_seconds: float = 5 * 60.0
     twitter_bookmarks_max_results: int = 10
+    twitter_bookmarks_max_pages: int = 4
     twitter_bookmarks_api_base: str = "https://api.x.com"
     gallery_dl_cookies: Path | None = None
 
@@ -76,6 +77,7 @@ class BotConfig:
             twitter_bookmarks_grace_seconds=float(os.getenv("TWITTER_BOOKMARKS_GRACE_SECONDS", "10")),
             twitter_bookmarks_idle_seconds=float(os.getenv("TWITTER_BOOKMARKS_IDLE_SECONDS", str(5 * 60))),
             twitter_bookmarks_max_results=int(os.getenv("TWITTER_BOOKMARKS_MAX_RESULTS", "10")),
+            twitter_bookmarks_max_pages=int(os.getenv("TWITTER_BOOKMARKS_MAX_PAGES", "4")),
             twitter_bookmarks_api_base=os.getenv("TWITTER_BOOKMARKS_API_BASE", "https://api.x.com"),
             gallery_dl_cookies=parse_optional_path(os.getenv("GALLERY_DL_COOKIES") or os.getenv("POIPIKU_COOKIES")),
         )
