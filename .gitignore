@@ -17,3 +17,4 @@ data/media/
 data/tmp/
 test_output/
 node_modules/
+.x-user-token.json
