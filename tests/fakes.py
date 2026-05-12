@@ -157,6 +157,19 @@ class FakeBookmarkClient:
         return self.snapshots[index]
 
 
+class FakeSafetyDetector:
+    def __init__(self, scores: list[float | None]):
+        self.scores = scores
+        self.calls: list[list[str]] = []
+
+    async def score_images(self, image_paths: list[str]) -> tuple[float | None, int]:
+        self.calls.append(list(image_paths))
+        if not self.scores:
+            return None, 0
+        score = self.scores.pop(0)
+        return score, len(image_paths)
+
+
 def make_image(path: Path, fmt: str = "JPEG") -> str:
     path.parent.mkdir(parents=True, exist_ok=True)
     image = Image.new("RGB", (4, 4), color=(255, 255, 255))

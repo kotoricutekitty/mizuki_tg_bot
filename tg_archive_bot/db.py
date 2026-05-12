@@ -186,6 +186,17 @@ class Database:
                 (message_id, now, submission_id),
             )
 
+    def update_metadata(self, submission_id: int, metadata: dict[str, Any], now: datetime | None = None) -> None:
+        with self.connect() as conn:
+            conn.execute(
+                """
+                UPDATE submissions
+                SET metadata_json = ?, canonical_url = COALESCE(?, canonical_url), updated_at = COALESCE(?, updated_at)
+                WHERE id = ?
+                """,
+                (json.dumps(metadata, ensure_ascii=False), metadata.get("canonical_url"), now, submission_id),
+            )
+
     def pending_submissions(self) -> list[Submission]:
         with self.connect() as conn:
             rows = conn.execute("SELECT * FROM submissions WHERE status = 'pending'").fetchall()

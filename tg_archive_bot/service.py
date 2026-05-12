@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
+import json
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -12,6 +13,7 @@ from .config import BotConfig
 from .db import Database, Submission
 from .downloader import Downloader
 from .media import MAX_PHOTO_SIZE, MAX_VIDEO_SIZE, media_kind
+from .safety import ImageSafetyDetector, SafetyDecision, classify_safety
 from .url_utils import extract_urls_from_text, normalize_url
 
 
@@ -57,12 +59,21 @@ class SubmitResult:
 
 
 class ArchiveBot:
-    def __init__(self, config: BotConfig, db: Database, downloader: Downloader, bot: BotClient, clock: Clock | None = None):
+    def __init__(
+        self,
+        config: BotConfig,
+        db: Database,
+        downloader: Downloader,
+        bot: BotClient,
+        clock: Clock | None = None,
+        safety_detector: ImageSafetyDetector | None = None,
+    ):
         self.config = config
         self.db = db
         self.downloader = downloader
         self.bot = bot
         self.clock = clock or SystemClock()
+        self.safety_detector = safety_detector
         self.bookmark_monitor: BookmarkActivator | None = None
 
     async def start(self, update: Any, context: Any = None) -> None:
@@ -191,12 +202,14 @@ class ArchiveBot:
                 logging.error("下载失败: %s (用户: %s(%s))", url, username, user_id)
                 await update.message.reply_text(messages.download_failed(url))
                 continue
+            safety_decision = await self.classify_downloaded_content(url, media_files, metadata)
+            status = "pending" if not is_admin or safety_decision.rating == "uncertain" else "approved"
             try:
                 submission_id = self.db.create_submission(
                     user_id=user_id,
                     username=username,
                     url=url,
-                    status="approved" if is_admin else "pending",
+                    status=status,
                     media_paths=media_files,
                     metadata=metadata,
                     now=self.clock.now(),
@@ -209,8 +222,8 @@ class ArchiveBot:
                     await update.message.reply_text(messages.duplicate_insert_failed())
                 continue
 
-            logging.info("创建投稿 #%s: %s (用户: %s(%s), 状态: %s)", submission_id, url, username, user_id, "approved" if is_admin else "pending")
-            if is_admin:
+            logging.info("创建投稿 #%s: %s (用户: %s(%s), 状态: %s)", submission_id, url, username, user_id, status)
+            if status == "approved":
                 await self.publish_submission(submission_id, user_id)
                 await update.message.reply_text(messages.admin_published(url))
             else:
@@ -228,19 +241,16 @@ class ArchiveBot:
         if origin.chat is None or origin.message_id is None:
             return False
         forward_chat_id = origin.chat.id
-        our_channel_id = self.config.publish_channel_id
-        if our_channel_id.startswith("@"):
-            forward_chat_username = getattr(origin.chat, "username", "")
-            is_our_channel = f"@{forward_chat_username}" == our_channel_id
-        else:
-            is_our_channel = str(forward_chat_id) == our_channel_id
-        if not is_our_channel:
-            return False
-        submission = self.db.find_by_message_id(origin.message_id)
-        if not submission:
-            return False
-        await self.return_original_submission(update.message, submission)
-        return True
+        channel_ids = [self.config.publish_channel_id]
+        if self.config.r18_routing_enabled and self.config.r18_channel_id:
+            channel_ids.append(self.config.r18_channel_id)
+        if any(is_forward_from_channel(origin.chat, channel_id) for channel_id in channel_ids):
+            submission = self.db.find_by_message_id(origin.message_id)
+            if not submission:
+                return False
+            await self.return_original_submission(update.message, submission)
+            return True
+        return False
 
     async def return_original_submission(self, message: Any, submission: Submission) -> None:
         await message.reply_text(messages.original_found(submission.url))
@@ -251,12 +261,15 @@ class ArchiveBot:
                 logging.warning("原图不存在: %s", media_path)
 
     async def send_to_review(self, submission_id: int, url: str, username: str, media_files: list[str], metadata: dict) -> Any | None:
+        buttons = [
+            {"text": messages.APPROVE_BUTTON, "callback_data": f"approve:{submission_id}"},
+            {"text": messages.REJECT_BUTTON, "callback_data": f"reject:{submission_id}"},
+        ]
+        if metadata.get("safety_rating") == "uncertain" and self.config.r18_routing_enabled and self.config.r18_channel_id:
+            buttons.insert(1, {"text": "🔞 R-18", "callback_data": f"approve_r18:{submission_id}"})
         reply_markup = {
             "inline_keyboard": [
-                [
-                    {"text": messages.APPROVE_BUTTON, "callback_data": f"approve:{submission_id}"},
-                    {"text": messages.REJECT_BUTTON, "callback_data": f"reject:{submission_id}"},
-                ]
+                buttons
             ]
         }
         text = messages.review_caption(submission_id, username, url, metadata)
@@ -284,6 +297,7 @@ class ArchiveBot:
             logging.error("发布失败: 投稿 #%s 不存在", submission_id)
             return None
         self.db.update_status(submission_id, "approved", reviewer_id, self.clock.now())
+        target_channel = self.publish_channel_for_submission(submission)
         caption = messages.publish_caption(
             submission.url,
             author_name=submission.author_name,
@@ -298,7 +312,7 @@ class ArchiveBot:
         if len(media_files) <= 10:
             if len(media_files) == 1:
                 sent = await self._send_single_media(
-                    self.config.publish_channel_id,
+                    target_channel,
                     media_files[0],
                     caption,
                     parse_mode="HTML",
@@ -306,7 +320,7 @@ class ArchiveBot:
                 channel_message_id = getattr(sent, "message_id", None)
             else:
                 sent_media = await self.bot.send_media_group(
-                    chat_id=self.config.publish_channel_id,
+                    chat_id=target_channel,
                     media=build_media_group(media_files[:10], caption, parse_mode="HTML"),
                 )
                 if sent_media:
@@ -314,7 +328,7 @@ class ArchiveBot:
         else:
             reply_markup = {"inline_keyboard": [[{"text": "🖼️ 打开完整画廊", "url": submission.url}]]}
             sent = await self.bot.send_photo(
-                chat_id=self.config.publish_channel_id,
+                chat_id=target_channel,
                 photo=media_files[0],
                 caption=f"{caption}\n\n📸 共 {len(media_files)} 张图",
                 parse_mode="HTML",
@@ -329,12 +343,12 @@ class ArchiveBot:
                 if work_id:
                     group_caption += f" — Pixiv {work_id}"
                 await self.bot.send_media_group(
-                    chat_id=self.config.publish_channel_id,
+                    chat_id=target_channel,
                     media=build_media_group(group_files, group_caption),
                 )
         if channel_message_id:
             self.db.update_message_id(submission_id, int(channel_message_id), self.clock.now())
-        logging.info("发布成功: 投稿 #%s 已发送到频道 %s", submission_id, self.config.publish_channel_id)
+        logging.info("发布成功: 投稿 #%s 已发送到频道 %s", submission_id, target_channel)
         return channel_message_id
 
     async def _send_single_media(
@@ -380,7 +394,18 @@ class ArchiveBot:
         if submission.status != "pending":
             await query.edit_message_caption(caption=messages.callback_already_done(existing_caption, submission.status))
             return
-        if action == "approve":
+        if action == "approve_r18":
+            metadata = submission_metadata(submission)
+            metadata["safety_rating"] = "r18"
+            metadata["safety_reason"] = metadata.get("safety_reason") or "admin selected r18"
+            self.db.update_metadata(submission_id, metadata, self.clock.now())
+            await self.publish_submission(submission_id, user_id)
+            await query.edit_message_caption(caption=messages.callback_approved(existing_caption, username))
+            try:
+                await self.bot.send_message(submission.user_id, messages.submitter_approved(submission.url))
+            except Exception as exc:
+                logging.warning("无法通知投稿者 %s: %s", submission.user_id, exc)
+        elif action == "approve":
             await self.publish_submission(submission_id, user_id)
             await query.edit_message_caption(caption=messages.callback_approved(existing_caption, username))
             try:
@@ -425,22 +450,33 @@ class ArchiveBot:
         existing = self.find_existing_submission_from_metadata(normalized_url, metadata)
         if existing:
             return api_duplicate_result(existing)
+        safety_decision = await self.classify_downloaded_content(normalized_url, media_files, metadata)
+        status = "pending" if safety_decision.rating == "uncertain" else "approved"
         admin_id = self.config.admin_ids[0] if self.config.admin_ids else 0
         submission_id = self.db.create_submission(
             user_id=admin_id,
             username="api_submit",
             url=normalized_url,
-            status="approved",
+            status=status,
             media_paths=media_files,
             metadata=metadata,
             now=self.clock.now(),
         )
+        if status == "pending":
+            await self.send_to_review(submission_id, normalized_url, "api_submit", media_files, metadata)
+            return SubmitResult(
+                202,
+                {
+                    "status": "pending_review",
+                    "message": "投稿需要管理员审核",
+                    "submission_id": submission_id,
+                    "url": normalized_url,
+                    "safety_reason": metadata.get("safety_reason", ""),
+                    "safety_score": metadata.get("safety_score"),
+                },
+            )
         await self.publish_submission(submission_id, admin_id)
-        for admin in self.config.admin_ids:
-            try:
-                await self.bot.send_message(admin, messages.api_notify(submission_id, normalized_url, metadata))
-            except Exception as exc:
-                logging.warning("无法通知管理员 %s: %s", admin, exc)
+        await self.notify_api_submission(submission_id, normalized_url, metadata)
         return SubmitResult(
             200,
             {
@@ -464,23 +500,31 @@ class ArchiveBot:
         existing = self.find_existing_submission_from_metadata(normalized_url, metadata)
         if existing:
             return "duplicate", existing.id
+        safety_decision = await self.classify_downloaded_content(normalized_url, media_files, metadata)
+        status = "pending" if safety_decision.rating == "uncertain" else "approved"
         admin_id = self.config.admin_ids[0] if self.config.admin_ids else 0
         submission_id = self.db.create_submission(
             user_id=admin_id,
             username=username,
             url=normalized_url,
-            status="approved",
+            status=status,
             media_paths=media_files,
             metadata=metadata,
             now=self.clock.now(),
         )
+        if status == "pending":
+            await self.send_to_review(submission_id, normalized_url, username, media_files, metadata)
+            return "pending_review", submission_id
         await self.publish_submission(submission_id, admin_id)
+        await self.notify_api_submission(submission_id, normalized_url, metadata)
+        return "submitted", submission_id
+
+    async def notify_api_submission(self, submission_id: int, normalized_url: str, metadata: dict[str, Any]) -> None:
         for admin in self.config.admin_ids:
             try:
                 await self.bot.send_message(admin, messages.api_notify(submission_id, normalized_url, metadata))
             except Exception as exc:
                 logging.warning("无法通知管理员 %s: %s", admin, exc)
-        return "submitted", submission_id
 
     def find_existing_submission_from_metadata(self, url: str, metadata: dict[str, Any]) -> Submission | None:
         for candidate in (metadata.get("canonical_url"), url):
@@ -490,6 +534,29 @@ class ArchiveBot:
             if existing:
                 return existing
         return None
+
+    async def classify_downloaded_content(self, url: str, media_files: list[str], metadata: dict[str, Any]) -> SafetyDecision:
+        decision = await classify_safety(
+            config=self.config,
+            url=url,
+            media_paths=media_files,
+            metadata=metadata,
+            detector=self.safety_detector,
+        )
+        metadata["safety_rating"] = decision.rating
+        metadata["safety_reason"] = decision.reason
+        metadata["safety_checked_count"] = decision.checked_count
+        if decision.score is not None:
+            metadata["safety_score"] = decision.score
+        return decision
+
+    def publish_channel_for_submission(self, submission: Submission) -> str:
+        if not self.config.r18_routing_enabled or not self.config.r18_channel_id:
+            return self.config.publish_channel_id
+        metadata = submission_metadata(submission)
+        if metadata.get("safety_rating") == "r18":
+            return self.config.r18_channel_id
+        return self.config.publish_channel_id
 
 
 def collect_message_text(message: Any) -> str:
@@ -536,6 +603,27 @@ def api_duplicate_result(existing: Submission) -> SubmitResult:
             "current_status": existing.status,
         },
     )
+
+
+def submission_metadata(submission: Submission) -> dict[str, Any]:
+    try:
+        metadata = json.loads(submission.metadata_json or "{}")
+    except json.JSONDecodeError:
+        metadata = {}
+    if not isinstance(metadata, dict):
+        metadata = {}
+    metadata.setdefault("canonical_url", submission.canonical_url or submission.url)
+    metadata.setdefault("author_name", submission.author_name or "")
+    metadata.setdefault("title", submission.title or "")
+    metadata.setdefault("text", submission.text or "")
+    return metadata
+
+
+def is_forward_from_channel(chat: Any, channel_id: str) -> bool:
+    if channel_id.startswith("@"):
+        forward_chat_username = getattr(chat, "username", "")
+        return f"@{forward_chat_username}" == channel_id
+    return str(getattr(chat, "id", "")) == channel_id
 
 
 def pixiv_work_id(url: str) -> str:

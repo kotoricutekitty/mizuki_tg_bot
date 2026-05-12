@@ -20,6 +20,12 @@ class BotConfig:
     http_api_port: int = 8080
     pixiv_limit_count: int = 100
     pixiv_limit_hours: int = 5
+    r18_routing_enabled: bool = False
+    r18_channel_id: str = ""
+    nsfw_detection_enabled: bool = False
+    nsfw_high_threshold: float = 0.80
+    nsfw_low_threshold: float = 0.25
+    nsfw_twitter_max_images: int = 4
     twitter_bookmarks_enabled: bool = False
     twitter_bookmarks_user_id: str = ""
     twitter_bookmarks_access_token: str = ""
@@ -48,6 +54,12 @@ class BotConfig:
             http_api_enabled=parse_bool(os.getenv("HTTP_API_ENABLED", "false")),
             http_api_host=os.getenv("HTTP_API_HOST", "0.0.0.0"),
             http_api_port=int(os.getenv("HTTP_API_PORT", "8080")),
+            r18_routing_enabled=parse_bool(os.getenv("R18_ROUTING_ENABLED", "false")),
+            r18_channel_id=os.getenv("R18_CHANNEL_ID", ""),
+            nsfw_detection_enabled=parse_bool(os.getenv("NSFW_DETECTION_ENABLED", "false")),
+            nsfw_high_threshold=float(os.getenv("NSFW_HIGH_THRESHOLD", "0.80")),
+            nsfw_low_threshold=float(os.getenv("NSFW_LOW_THRESHOLD", "0.25")),
+            nsfw_twitter_max_images=int(os.getenv("NSFW_TWITTER_MAX_IMAGES", "4")),
             twitter_bookmarks_enabled=parse_bool(os.getenv("TWITTER_BOOKMARKS_ENABLED", "false")),
             twitter_bookmarks_user_id=os.getenv("TWITTER_BOOKMARKS_USER_ID", ""),
             twitter_bookmarks_access_token=os.getenv("TWITTER_BOOKMARKS_ACCESS_TOKEN", ""),
@@ -68,6 +80,8 @@ class BotConfig:
             missing.append("PUBLISH_CHANNEL_ID")
         if missing:
             raise ValueError("Missing required config: " + ", ".join(missing))
+        if self.r18_routing_enabled and not self.r18_channel_id:
+            raise ValueError("Missing required R18 routing config: R18_CHANNEL_ID")
         if self.twitter_bookmarks_enabled:
             bookmark_missing = []
             if not self.twitter_bookmarks_user_id:

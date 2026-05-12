@@ -12,6 +12,7 @@ from .config import BotConfig
 from .db import Database
 from .downloader import GalleryDownloader
 from .http_api import run_http_api
+from .safety import create_image_safety_detector
 from .service import ArchiveBot
 from .twitter_bookmarks import TwitterBookmarkMonitor, XBookmarksClient
 
@@ -109,7 +110,13 @@ async def main() -> None:
     db = Database(config.database_path)
     db.init()
     application = ApplicationBuilder().token(config.bot_token).build()
-    archive_bot = ArchiveBot(config, db, GalleryDownloader(config.media_dir), TelegramBotClient(application.bot))
+    archive_bot = ArchiveBot(
+        config,
+        db,
+        GalleryDownloader(config.media_dir),
+        TelegramBotClient(application.bot),
+        safety_detector=create_image_safety_detector(config),
+    )
 
     application.add_error_handler(error_handler)
     application.add_handler(CommandHandler("start", archive_bot.start))

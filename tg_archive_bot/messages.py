@@ -110,6 +110,14 @@ def review_caption(submission_id: int, username: str, url: str, metadata: dict) 
         text += f"{title}\n\n"
     if content_text:
         text += f"{content_text}\n\n"
+    if metadata.get("safety_rating") == "uncertain":
+        reason = metadata.get("safety_reason") or "需要人工判断"
+        score = metadata.get("safety_score")
+        score_text = f"，score={score:.2f}" if isinstance(score, (int, float)) else ""
+        text += f"⚠️ R-18 自动判断不确定（{reason}{score_text}），请审核喵。\n\n"
+    elif metadata.get("safety_rating") == "r18":
+        reason = metadata.get("safety_reason") or "命中 R-18 规则"
+        text += f"🔞 R-18：{reason}\n\n"
     text += f"{canonical_url}"
     return text
 

@@ -11,12 +11,12 @@ from .fakes import FakeBot, FakeClock, FakeDownloader, make_image
 
 @pytest.fixture
 def app_factory(tmp_path):
-    def build(mapping=None, admin_ids=(1,), channel="@archive"):
+    def build(mapping=None, admin_ids=(1,), channel="@archive", r18_channel="", safety_detector=None, **config_overrides):
         db = Database(tmp_path / "db.sqlite")
         db.init()
         bot = FakeBot()
         downloader = FakeDownloader(mapping or {})
-        config = BotConfig(
+        config_values = dict(
             bot_token="test-token",
             admin_ids=tuple(admin_ids),
             publish_channel_id=channel,
@@ -25,8 +25,13 @@ def app_factory(tmp_path):
             media_dir=tmp_path / "media",
             database_path=tmp_path / "db.sqlite",
             temp_dir=tmp_path / "tmp",
+            r18_routing_enabled=bool(r18_channel),
+            r18_channel_id=r18_channel,
+            nsfw_detection_enabled=safety_detector is not None,
         )
-        service = ArchiveBot(config, db, downloader, bot, FakeClock())
+        config_values.update(config_overrides)
+        config = BotConfig(**config_values)
+        service = ArchiveBot(config, db, downloader, bot, FakeClock(), safety_detector=safety_detector)
         return service, db, bot, downloader
 
     return build

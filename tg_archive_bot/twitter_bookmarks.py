@@ -186,7 +186,7 @@ class TwitterBookmarkMonitor:
                 if status == "duplicate":
                     self.db.mark_bookmark_duplicate(item.tweet_id, submission_id, now)
                     changed = True
-                elif status == "submitted":
+                elif status in {"submitted", "pending_review"}:
                     self.db.mark_bookmark_submitted(item.tweet_id, submission_id, now)
                     changed = True
                 else:

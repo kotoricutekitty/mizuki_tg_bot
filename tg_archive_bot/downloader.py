@@ -47,6 +47,9 @@ class GalleryDownloader:
             metadata["author_name"] = tweet.get("author", {}).get("name", "")
             metadata["text"] = tweet.get("text", "")
             metadata["canonical_url"] = url
+            for key in ("possibly_sensitive", "sensitive", "nsfw", "adult"):
+                if key in tweet:
+                    metadata[key] = tweet.get(key)
             media_files: list[str] = []
             media = tweet.get("media", {})
             all_media = media.get("photos", []) + media.get("videos", [])
@@ -111,10 +114,16 @@ class GalleryDownloader:
             metadata["author_name"] = data.get("user", {}).get("name", "")
             metadata["title"] = data.get("title", "")
             metadata["text"] = data.get("description", data.get("caption", ""))
+            for key in ("x_restrict", "rating", "tags"):
+                if key in data:
+                    metadata[key] = data.get(key)
         elif "poipiku" in url:
             metadata["author_name"] = data.get("user_name", "")
             metadata["title"] = data.get("title", "")
             metadata["text"] = data.get("description", "")
+            for key in ("age_limit", "rating", "tags", "nsfw", "adult"):
+                if key in data:
+                    metadata[key] = data.get(key)
         metadata["canonical_url"] = url
 
     async def _convert_ugoira(self, file_path: Path) -> Path | None:
