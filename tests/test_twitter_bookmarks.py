@@ -192,13 +192,15 @@ async def test_bookmark_monitor_activation_and_idle_shutdown(app_factory):
 async def test_admin_command_starts_bookmark_watch(app_factory):
     service, db, bot, _ = app_factory(admin_ids=(1, 2))
     clock = FakeClock()
-    monitor = monitor_for(service, db, FakeBookmarkClient([[]]), clock)
+    client = FakeBookmarkClient([[]])
+    monitor = monitor_for(service, db, client, clock)
     service.bookmark_monitor = monitor
     message = FakeMessage()
 
     await service.bookmark_watch_command(FakeUpdate(FakeUser(1, "admin"), message=message))
 
     assert monitor.active
+    assert client.calls == 1
     assert message.replies[0]["text"] == messages.BOOKMARK_WATCH_STARTED
     assert bot.calls == [{"method": "send_message", "chat_id": 2, "text": messages.BOOKMARK_WATCH_STARTED}]
 
@@ -232,13 +234,15 @@ def test_http_bookmark_start_uses_post_token(app_factory):
 @pytest.mark.asyncio
 async def test_http_bookmark_start_notifies_admins(app_factory):
     service, db, bot, _ = app_factory(admin_ids=(1, 2))
-    monitor = monitor_for(service, db, FakeBookmarkClient([[]]), FakeClock())
+    client = FakeBookmarkClient([[]])
+    monitor = monitor_for(service, db, client, FakeClock())
     service.bookmark_monitor = monitor
 
     result = await start_bookmarks(service, "api-token")
 
     assert result.status == 200
     assert monitor.active
+    assert client.calls == 1
     assert bot.calls == [
         {"method": "send_message", "chat_id": 1, "text": messages.BOOKMARK_WATCH_STARTED},
         {"method": "send_message", "chat_id": 2, "text": messages.BOOKMARK_WATCH_STARTED},

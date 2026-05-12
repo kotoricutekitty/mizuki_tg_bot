@@ -16,11 +16,15 @@ from .twitter_bookmarks import BookmarkPost
 
 class ActivatableBookmarkMonitor(Protocol):
     label: str
+    active: bool
 
     def is_configured(self) -> bool:
         ...
 
     def activate(self) -> None:
+        ...
+
+    async def poll_once(self) -> None:
         ...
 
 
@@ -41,6 +45,11 @@ class BookmarkMonitorGroup:
         if not activated:
             raise RuntimeError("No bookmark monitor is configured")
         logging.info("Activated bookmark monitors: %s", ", ".join(activated))
+
+    async def poll_once(self) -> None:
+        for monitor in self.monitors:
+            if monitor.is_configured() and monitor.active:
+                await monitor.poll_once()
 
 
 class PixivBookmarksClient:

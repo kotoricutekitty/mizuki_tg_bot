@@ -19,6 +19,7 @@ async def start_bookmarks(bot: ArchiveBot, token: str | None) -> SubmitResult:
     result = start_bookmarks_payload(bot, token)
     if result.status == 200:
         await bot.notify_bookmark_watch_started()
+        await bot.poll_bookmark_watch_once()
     return result
 
 

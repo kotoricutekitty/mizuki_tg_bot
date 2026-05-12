@@ -55,6 +55,9 @@ class BookmarkActivator(Protocol):
     def activate(self) -> None:
         ...
 
+    async def poll_once(self) -> None:
+        ...
+
 
 @dataclass
 class SubmitResult:
@@ -187,6 +190,7 @@ class ArchiveBot:
         self.bookmark_monitor.activate()
         await update.message.reply_text(messages.BOOKMARK_WATCH_STARTED)
         await self.notify_bookmark_watch_started(exclude_user_id=update.effective_user.id)
+        await self.poll_bookmark_watch_once()
 
     async def find_command(self, update: Any, context: Any = None) -> None:
         if update.effective_user.id not in self.config.admin_ids:
@@ -254,6 +258,10 @@ class ArchiveBot:
             return SubmitResult(503, {"status": "unavailable", "message": "Bookmark monitor is not configured"})
         self.bookmark_monitor.activate()
         return SubmitResult(200, {"status": "started", "message": "Bookmark monitors started"})
+
+    async def poll_bookmark_watch_once(self) -> None:
+        if self.bookmark_monitor and self.bookmark_monitor.is_configured():
+            await self.bookmark_monitor.poll_once()
 
     async def notify_bookmark_watch_started(self, exclude_user_id: int | None = None) -> None:
         await self._notify_admins(messages.BOOKMARK_WATCH_STARTED, exclude_user_id=exclude_user_id)

@@ -87,12 +87,18 @@ def test_bookmark_monitor_group_activates_all_configured_monitors():
             self.label = label
             self.configured = configured
             self.activations = 0
+            self.active = False
+            self.polls = 0
 
         def is_configured(self) -> bool:
             return self.configured
 
         def activate(self) -> None:
             self.activations += 1
+            self.active = True
+
+        async def poll_once(self) -> None:
+            self.polls += 1
 
     twitter = StubMonitor("Twitter", True)
     pixiv = StubMonitor("Pixiv", False)
@@ -104,3 +110,33 @@ def test_bookmark_monitor_group_activates_all_configured_monitors():
     assert twitter.activations == 1
     assert pixiv.activations == 0
     assert poipiku.activations == 1
+
+
+@pytest.mark.asyncio
+async def test_bookmark_monitor_group_polls_active_configured_monitors():
+    class StubMonitor:
+        def __init__(self, label: str, configured: bool, active: bool):
+            self.label = label
+            self.configured = configured
+            self.active = active
+            self.polls = 0
+
+        def is_configured(self) -> bool:
+            return self.configured
+
+        def activate(self) -> None:
+            self.active = True
+
+        async def poll_once(self) -> None:
+            self.polls += 1
+
+    twitter = StubMonitor("Twitter", True, True)
+    pixiv = StubMonitor("Pixiv", True, False)
+    poipiku = StubMonitor("Poipiku", False, True)
+    group = BookmarkMonitorGroup((twitter, pixiv, poipiku))
+
+    await group.poll_once()
+
+    assert twitter.polls == 1
+    assert pixiv.polls == 0
+    assert poipiku.polls == 0

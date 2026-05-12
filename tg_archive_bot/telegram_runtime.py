@@ -235,6 +235,7 @@ async def main() -> None:
         if config.bookmarks_enabled or config.twitter_bookmarks_enabled:
             archive_bot.bookmark_monitor.activate()
             await archive_bot.notify_bookmark_watch_started()
+            await archive_bot.poll_bookmark_watch_once()
     logging.info("Bot started successfully!")
 
     try:
