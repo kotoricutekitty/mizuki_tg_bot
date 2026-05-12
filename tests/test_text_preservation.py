@@ -17,6 +17,22 @@ async def test_start_help_commands(app_factory):
     await service.help_command(FakeUpdate(FakeUser(2, "user"), message=help_message))
     assert help_message.replies[0]["text"] == messages.HELP_TEXT
 
+    original_message = FakeMessage()
+    await service.original_command(FakeUpdate(FakeUser(2, "user"), message=original_message))
+    assert original_message.replies[0]["text"] == messages.ORIGINAL_HELP_TEXT
+
+
+@pytest.mark.asyncio
+async def test_admin_help_command(app_factory):
+    service, *_ = app_factory()
+    admin_message = FakeMessage()
+    await service.admin_help_command(FakeUpdate(FakeUser(1, "admin"), message=admin_message))
+    assert admin_message.replies[0]["text"] == messages.ADMIN_HELP_TEXT
+
+    user_message = FakeMessage()
+    await service.admin_help_command(FakeUpdate(FakeUser(2, "user"), message=user_message))
+    assert user_message.replies[0]["text"] == messages.PERMISSION_DENIED
+
 
 @pytest.mark.asyncio
 async def test_admin_config_commands_preserve_text(app_factory):

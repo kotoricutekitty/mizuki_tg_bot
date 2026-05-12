@@ -17,10 +17,21 @@ HELP_TEXT = (
     "📖 使用说明喵：\n"
     "• 直接发送链接即可投稿喵\n"
     "• 支持批量发送多个链接哦喵\n"
-    "• 管理员命令喵：\n"
-    "  /config - 查看配置喵\n"
-    "  /set <key> <value> - 设置配置喵\n"
-    "  /pending - 查看待审核列表喵"
+    "• 想要取回原图的话，用 /original 看说明喵"
+)
+
+ADMIN_HELP_TEXT = (
+    "📖 管理员使用说明喵：\n"
+    "• /config - 查看配置喵\n"
+    "• /set <key> <value> - 设置配置喵\n"
+    "• /pending - 查看待审核列表喵\n"
+    "• /pixiv_status - 查看Pixiv下载频率喵\n"
+    "• /nsfw_threshold <low> <high> - 调整NSFW阈值喵\n"
+    "• /bookmark_watch - 开启Twitter bookmark监控喵"
+)
+
+ORIGINAL_HELP_TEXT = (
+    "想取回原图的话，把频道里的消息转发给我，或者直接发送已经投稿过的原链接/频道消息链接喵。"
 )
 
 PERMISSION_DENIED = "呜喵...你没有权限做这个操作喵😾"

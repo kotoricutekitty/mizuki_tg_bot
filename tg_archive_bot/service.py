@@ -87,6 +87,15 @@ class ArchiveBot:
     async def help_command(self, update: Any, context: Any = None) -> None:
         await update.message.reply_text(messages.HELP_TEXT)
 
+    async def admin_help_command(self, update: Any, context: Any = None) -> None:
+        if update.effective_user.id not in self.config.admin_ids:
+            await update.message.reply_text(messages.PERMISSION_DENIED)
+            return
+        await update.message.reply_text(messages.ADMIN_HELP_TEXT)
+
+    async def original_command(self, update: Any, context: Any = None) -> None:
+        await update.message.reply_text(messages.ORIGINAL_HELP_TEXT)
+
     async def config_command(self, update: Any, context: Any = None) -> None:
         if update.effective_user.id not in self.config.admin_ids:
             await update.message.reply_text(messages.PERMISSION_DENIED)

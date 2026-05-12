@@ -148,6 +148,8 @@ async def main() -> None:
     application.add_error_handler(notify_error_handler)
     application.add_handler(CommandHandler("start", archive_bot.start))
     application.add_handler(CommandHandler("help", archive_bot.help_command))
+    application.add_handler(CommandHandler("admin_help", archive_bot.admin_help_command))
+    application.add_handler(CommandHandler("original", archive_bot.original_command))
     application.add_handler(CommandHandler("config", archive_bot.config_command))
     application.add_handler(CommandHandler("set", archive_bot.set_command))
     application.add_handler(CommandHandler("pending", archive_bot.pending_command))
