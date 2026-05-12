@@ -14,20 +14,21 @@ START_TEXT = (
 )
 
 HELP_TEXT = (
-    "📖 使用说明喵：\n"
-    "• 直接发送链接即可投稿喵\n"
-    "• 支持批量发送多个链接哦喵\n"
-    "• 想要取回原图的话，用 /original 看说明喵"
+    "📖 mizuki 使用小纸条喵～\n\n"
+    "把 X/Twitter、Pixiv、Poipiku 链接直接丢给我就可以投稿啦喵。\n"
+    "一次发好几个链接也没问题，我会乖乖排队处理喵。\n\n"
+    "想取回频道里发过的原图，用 /original 看说明就好喵。"
 )
 
 ADMIN_HELP_TEXT = (
-    "📖 管理员使用说明喵：\n"
-    "• /config - 查看配置喵\n"
-    "• /set <key> <value> - 设置配置喵\n"
-    "• /pending - 查看待审核列表喵\n"
-    "• /pixiv_status - 查看Pixiv下载频率喵\n"
-    "• /nsfw_threshold <low> <high> - 调整NSFW阈值喵\n"
-    "• /bookmark_watch - 开启Twitter bookmark监控喵"
+    "🛠 管理员小工具箱喵～\n\n"
+    "/pending - 看看有没有等摸头审核的投稿喵\n"
+    "/config - 偷看当前配置喵\n"
+    "/set <key> <value> - 调整配置喵\n"
+    "/pixiv_status - 查看 Pixiv 下载额度喵\n"
+    "/nsfw_threshold <low> <high> - 调整 NSFW 判断阈值喵\n"
+    "/bookmark_watch - 开始盯 Twitter bookmark 喵\n\n"
+    "频道消息转发给我时，还可以移动频道或删除投稿喵。"
 )
 
 ORIGINAL_HELP_TEXT = (
