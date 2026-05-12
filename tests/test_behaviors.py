@@ -50,7 +50,9 @@ async def test_admin_submit_auto_publish(app_factory, sample_media):
     assert submission is not None
     assert submission.status == "approved"
     assert submission.message_id is not None
-    assert message.replies[-1]["text"] == messages.admin_published("https://twitter.com/user/status/123")
+    assert len(message.replies) == 1
+    assert message.replies[0]["text"] == messages.admin_submission_received("https://twitter.com/user/status/123")
+    assert message.sent_messages[0].edited_text == messages.admin_published("https://twitter.com/user/status/123")
     assert bot.calls[0]["method"] == "send_photo"
     assert bot.calls[0]["chat_id"] == "@archive"
     assert bot.calls[0]["caption"] == "<b>artist</b>: 「hello」\nhttps://x.com/user/status/123"

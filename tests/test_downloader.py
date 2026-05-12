@@ -42,3 +42,14 @@ def test_load_cookie_header_reads_netscape_cookie_file(tmp_path: Path):
     )
 
     assert downloader.load_cookie_header(cookie_file) == "POIPIKU_LK=secret"
+
+
+def test_load_cookie_header_reads_browser_json_cookie_file(tmp_path: Path):
+    cookie_file = tmp_path / "cookies.json"
+    cookie_file.write_text(
+        '[{"domain": ".pixiv.net", "name": "PHPSESSID", "value": "user_session"},'
+        '{"domain": ".pixiv.net", "name": "device_token", "value": "device"}]',
+        encoding="utf-8",
+    )
+
+    assert downloader.load_cookie_header(cookie_file) == "PHPSESSID=user_session; device_token=device"

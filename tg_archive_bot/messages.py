@@ -192,6 +192,10 @@ def submitted_for_review(url: str) -> str:
     return f"投稿已提交成功喵😺！等待管理员审核中哦：{url}"
 
 
+def admin_submission_received(url: str) -> str:
+    return f"📥 收到投稿啦喵，开始处理：{url}"
+
+
 def review_submit_failed(url: str) -> str:
     return f"呜喵...投稿提交失败了喵😿，请稍后重试哦：{url}"
 

@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from tests.fakes import FakeCallbackQuery, FakeSafetyDetector, FakeSentMessage, FakeUpdate, FakeUser, make_image
+from tests.fakes import FakeCallbackQuery, FakeMessage, FakeSafetyDetector, FakeSentMessage, FakeUpdate, FakeUser, make_image
 
 
 @pytest.mark.asyncio
@@ -89,9 +89,28 @@ async def test_admin_moderation_notice_after_auto_publish(app_factory, sample_me
         "转到不色频道",
         "删除推文",
     ]
-    assert bot.calls[2]["method"] == "send_message"
-    assert bot.calls[2]["chat_id"] == 1
-    assert bot.calls[2]["text"].startswith("📥 收到API投稿啦喵！")
+    assert len(bot.calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_admin_manual_submit_leaves_single_moderation_message(app_factory, sample_media):
+    url = "https://poipiku.com/123/654.html"
+    detector = FakeSafetyDetector([(0.10, "FEMALE_BREAST_EXPOSED")])
+    service, _, bot, _ = app_factory(
+        {url: ([sample_media["jpg"]], {"canonical_url": url})},
+        r18_channel="@r18",
+        safety_detector=detector,
+    )
+    message = FakeMessage(text=url)
+
+    await service.handle_message(FakeUpdate(FakeUser(1, "admin"), message=message))
+
+    assert len(message.replies) == 1
+    assert bot.calls[0]["method"] == "send_photo"
+    assert bot.calls[0]["chat_id"] == "@archive"
+    assert bot.calls[1]["method"] == "send_photo"
+    assert bot.calls[1]["chat_id"] == 1
+    assert bot.calls[2] == {"method": "delete_message", "chat_id": 1, "message_id": 1}
 
 
 @pytest.mark.asyncio

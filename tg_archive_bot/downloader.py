@@ -309,9 +309,20 @@ def extract_poipiku_append_image_urls(html: str) -> list[str]:
 def load_cookie_header(cookies_path: Path) -> str:
     parts: list[str] = []
     try:
-        lines = cookies_path.read_text(encoding="utf-8").splitlines()
+        content = cookies_path.read_text(encoding="utf-8")
     except OSError:
         return ""
+    stripped = content.strip()
+    if stripped.startswith("["):
+        try:
+            cookies = json.loads(stripped)
+        except json.JSONDecodeError:
+            cookies = []
+        for cookie in cookies:
+            if isinstance(cookie, dict) and cookie.get("name") and cookie.get("value") is not None:
+                parts.append(f"{cookie['name']}={cookie['value']}")
+        return "; ".join(parts)
+    lines = content.splitlines()
     for line in lines:
         if not line or line.startswith("#"):
             continue

@@ -39,10 +39,20 @@ class FakeSentMessage:
     message_id: int
     caption: str = ""
     replies: list[dict[str, Any]] = field(default_factory=list)
+    edited_text: str | None = None
+    edited_caption: str | None = None
 
     async def reply_text(self, text: str, **kwargs: Any) -> "FakeSentMessage":
         self.replies.append({"method": "reply_text", "text": text, **kwargs})
         return FakeSentMessage(self.message_id + 1000, caption=text)
+
+    async def edit_text(self, text: str, **kwargs: Any) -> None:
+        self.edited_text = text
+        self.caption = text
+
+    async def edit_caption(self, caption: str, **kwargs: Any) -> None:
+        self.edited_caption = caption
+        self.caption = caption
 
 
 @dataclass
@@ -53,10 +63,13 @@ class FakeMessage:
     entities: list[FakeEntity] = field(default_factory=list)
     replies: list[dict[str, Any]] = field(default_factory=list)
     documents: list[dict[str, Any]] = field(default_factory=list)
+    sent_messages: list[FakeSentMessage] = field(default_factory=list)
 
     async def reply_text(self, text: str, **kwargs: Any) -> FakeSentMessage:
         self.replies.append({"method": "reply_text", "text": text, **kwargs})
-        return FakeSentMessage(len(self.replies), caption=text)
+        sent = FakeSentMessage(len(self.replies), caption=text)
+        self.sent_messages.append(sent)
+        return sent
 
     async def reply_document(self, document: Any, filename: str | None = None, **kwargs: Any) -> FakeSentMessage:
         self.documents.append({"method": "reply_document", "document": document, "filename": filename, **kwargs})
