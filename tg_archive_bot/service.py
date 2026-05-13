@@ -628,6 +628,9 @@ class ArchiveBot:
         if not submission:
             await query.edit_message_caption(caption=messages.callback_not_found(existing_caption))
             return
+        if action in {"move_r18", "move_safe", "delete_post"} and submission.status == "deleted":
+            await edit_callback_message(query, messages.callback_already_done(existing_caption, submission.status))
+            return
         if action in {"move_r18", "move_safe"}:
             source_key = parts[2] if len(parts) > 2 else ""
             await self.move_published_submission(submission, action, source_key, user_id)
@@ -851,8 +854,6 @@ class ArchiveBot:
         source_key: str,
         reviewer_id: int,
     ) -> None:
-        if not submission.message_id:
-            raise RuntimeError(f"Submission #{submission.id} has no channel message id")
         source_channel = self.source_channel_from_key(source_key) or self.publish_channel_for_submission(submission)
         for message_id in published_message_ids(submission):
             try:
@@ -1100,14 +1101,20 @@ def api_duplicate_result(existing: Submission) -> SubmitResult:
 
 
 async def edit_callback_message(query: Any, text: str) -> None:
-    message = getattr(query, "message", None)
-    if getattr(message, "caption", None) is not None and hasattr(query, "edit_message_caption"):
+    try:
+        message = getattr(query, "message", None)
+        if getattr(message, "caption", None) is not None and hasattr(query, "edit_message_caption"):
+            await query.edit_message_caption(caption=text)
+            return
+        if hasattr(query, "edit_message_text"):
+            await query.edit_message_text(text=text)
+            return
         await query.edit_message_caption(caption=text)
-        return
-    if hasattr(query, "edit_message_text"):
-        await query.edit_message_text(text=text)
-        return
-    await query.edit_message_caption(caption=text)
+    except Exception as exc:
+        if "message is not modified" in str(exc).lower():
+            logging.info("Callback message already has requested content; ignoring edit error")
+            return
+        raise
 
 
 async def update_status_message(status_message: Any | None, text: str, fallback_message: Any) -> None:

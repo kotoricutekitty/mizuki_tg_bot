@@ -576,6 +576,57 @@ async def test_admin_deletes_published_submission_from_forward_buttons(app_facto
 
 
 @pytest.mark.asyncio
+async def test_old_delete_button_on_deleted_submission_is_idempotent(app_factory, sample_media):
+    service, db, bot, _ = app_factory(channel="@archive", r18_channel="@r18")
+    sub_id = db.create_submission(
+        user_id=2,
+        username="u",
+        url="https://pixiv.net/artworks/deleted",
+        status="approved",
+        media_paths=[sample_media["jpg"]],
+        metadata={"canonical_url": "https://pixiv.net/artworks/deleted", "channel_message_ids": [40]},
+        now=service.clock.now(),
+    )
+    db.update_message_id(sub_id, 40, service.clock.now())
+    db.update_status(sub_id, "deleted", 1, service.clock.now())
+    query = FakeCallbackQuery(f"delete_post:{sub_id}:r18", FakeSentMessage(1, caption="original"))
+
+    await service.handle_callback(FakeUpdate(FakeUser(1, "admin"), callback_query=query))
+
+    assert bot.calls == []
+    assert db.get_submission(sub_id).status == "deleted"
+    assert query.edited_caption == "original\n\n✅ 已经被deleted啦喵！"
+
+
+@pytest.mark.asyncio
+async def test_callback_edit_message_not_modified_is_ignored(app_factory, sample_media):
+    service, db, bot, _ = app_factory(channel="@archive")
+    sub_id = db.create_submission(
+        user_id=2,
+        username="u",
+        url="https://twitter.com/u/status/not-modified",
+        status="approved",
+        media_paths=[sample_media["jpg"]],
+        metadata={"canonical_url": "https://twitter.com/u/status/not-modified", "channel_message_ids": [555]},
+        now=service.clock.now(),
+    )
+    db.update_message_id(sub_id, 555, service.clock.now())
+
+    class NotModifiedQuery(FakeCallbackQuery):
+        async def edit_message_caption(self, caption: str, **kwargs):
+            raise RuntimeError(
+                "Message is not modified: specified new message content and reply markup are exactly the same"
+            )
+
+    query = NotModifiedQuery(f"delete_post:{sub_id}:safe", FakeSentMessage(1, caption="original"))
+
+    await service.handle_callback(FakeUpdate(FakeUser(1, "admin"), callback_query=query))
+
+    assert bot.calls == [{"method": "delete_message", "chat_id": "@archive", "message_id": 555}]
+    assert db.get_submission(sub_id).status == "deleted"
+
+
+@pytest.mark.asyncio
 async def test_forward_channel_message_returns_originals_with_numeric_channel_id(app_factory, sample_media):
     service, db, *_ = app_factory(channel="-100123")
     db.create_submission(user_id=2, username="u", url="https://twitter.com/u/status/9", status="approved", media_paths=[sample_media["jpg"]], metadata={}, now=service.clock.now())
