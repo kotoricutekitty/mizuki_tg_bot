@@ -7,7 +7,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from .url_utils import normalize_url, provider_for_url
+from .url_utils import normalize_url, provider_for_url, twitter_status_id
 
 
 @dataclass
@@ -133,6 +133,26 @@ class Database:
                 """,
                 (*candidates, *candidates, *candidates),
             ).fetchone()
+            if not row:
+                status_id = twitter_status_id(url)
+                if status_id:
+                    status_pattern = f"%/status/{status_id}%"
+                    row = conn.execute(
+                        f"""
+                        SELECT *
+                        FROM submissions
+                        WHERE provider = 'x'
+                          AND (
+                              normalized_url LIKE ?
+                              OR url LIKE ?
+                              OR canonical_url LIKE ?
+                          )
+                        {deleted_filter}
+                        ORDER BY {order}
+                        LIMIT 1
+                        """,
+                        (status_pattern, status_pattern, status_pattern),
+                    ).fetchone()
         return row_to_submission(row) if row else None
 
     def find_by_message_id(self, message_id: int) -> Submission | None:

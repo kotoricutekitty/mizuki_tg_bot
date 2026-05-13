@@ -20,6 +20,14 @@ def normalize_url(url: str) -> str:
     return normalized
 
 
+def twitter_status_id(url: str) -> str | None:
+    match = re.search(
+        r"https?://(?:www\.)?(?:twitter|x|fxtwitter|vxtwitter|fixupx)\.com/(?:[^/?#]+|i)/status/(\d+)",
+        url,
+    )
+    return match.group(1) if match else None
+
+
 def extract_urls_from_text(text: str) -> list[str]:
     urls: list[str] = []
     for pattern in URL_PATTERNS:

@@ -792,6 +792,47 @@ def test_find_by_url_matches_canonical_url(app_factory, sample_media):
     assert existing.id == 1
 
 
+def test_find_by_url_matches_twitter_status_id_across_url_shapes(app_factory, sample_media):
+    service, db, *_ = app_factory()
+    existing_url = "https://twitter.com/tokooo000/status/2054486821556621803"
+    db.create_submission(
+        user_id=1,
+        username="admin",
+        url=existing_url,
+        status="approved",
+        media_paths=[sample_media["jpg"]],
+        metadata={"canonical_url": existing_url},
+        now=service.clock.now(),
+    )
+
+    existing = db.find_by_url("https://twitter.com/i/status/2054486821556621803")
+
+    assert existing is not None
+    assert existing.id == 1
+
+
+@pytest.mark.asyncio
+async def test_bookmark_submit_detects_existing_twitter_status_id(app_factory, sample_media):
+    service, db, bot, downloader = app_factory()
+    existing_url = "https://twitter.com/akym_amia25/status/2054485704189829212"
+    db.create_submission(
+        user_id=1,
+        username="admin",
+        url=existing_url,
+        status="approved",
+        media_paths=[sample_media["jpg"]],
+        metadata={"canonical_url": existing_url},
+        now=service.clock.now(),
+    )
+
+    status, submission_id = await service.submit_url_as_admin("https://twitter.com/i/status/2054485704189829212")
+
+    assert status == "duplicate"
+    assert submission_id == 1
+    assert downloader.calls == []
+    assert bot.calls == []
+
+
 def test_legacy_database_migration_compatibility(tmp_path, sample_media):
     from tg_archive_bot.db import Database
 
