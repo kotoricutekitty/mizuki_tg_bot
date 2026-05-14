@@ -233,7 +233,7 @@ def read_json_basic_auth(url: str, *, username: str, password: str, referer: str
             "Accept": "application/json",
             "Authorization": f"Basic {credentials}",
             "Referer": referer,
-            "User-Agent": "Mozilla/5.0 tg-archive-bot/0.1",
+            "User-Agent": f"mizuki-tg-bot/0.1 ({username})",
         },
     )
     try:
