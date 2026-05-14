@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import urllib.error
 from pathlib import Path
 
 import pytest
@@ -84,6 +85,18 @@ async def test_danbooru_favorites_client_reads_liked_posts(monkeypatch):
         BookmarkPost("124", "https://danbooru.donmai.us/posts/124"),
         BookmarkPost("125", "https://danbooru.donmai.us/posts/125"),
     ]
+
+
+@pytest.mark.asyncio
+async def test_danbooru_favorites_client_reports_auth_failure(monkeypatch):
+    def fake_urlopen(*args, **kwargs):
+        raise urllib.error.HTTPError("https://danbooru.donmai.us/favorites.json", 401, "Unauthorized", {}, None)
+
+    monkeypatch.setattr(web_bookmarks.urllib.request, "urlopen", fake_urlopen)
+    client = DanbooruFavoritesClient(username="user", password="bad-key", max_results=20)
+
+    with pytest.raises(RuntimeError, match="Danbooru favorites authentication failed"):
+        await client.fetch_bookmarks_until(set(), max_pages=1)
 
 
 @pytest.mark.asyncio

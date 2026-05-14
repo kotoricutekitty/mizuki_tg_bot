@@ -6,6 +6,7 @@ import json
 import logging
 import re
 import urllib.parse
+import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
@@ -234,8 +235,15 @@ def read_json_basic_auth(url: str, *, username: str, password: str, referer: str
             "User-Agent": "Mozilla/5.0 tg-archive-bot/0.1",
         },
     )
-    with urllib.request.urlopen(request, timeout=30) as response:
-        return json.loads(response.read().decode("utf-8", errors="replace"))
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            return json.loads(response.read().decode("utf-8", errors="replace"))
+    except urllib.error.HTTPError as exc:
+        if exc.code in {401, 403}:
+            raise RuntimeError(
+                f"Danbooru favorites authentication failed (HTTP {exc.code}); check DANBOORU_USERNAME and API key"
+            ) from exc
+        raise RuntimeError(f"Danbooru favorites request failed (HTTP {exc.code})") from exc
 
 
 def read_text(url: str, cookies_path: Path, *, referer: str) -> str:
