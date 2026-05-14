@@ -4,7 +4,7 @@ Python-only Telegram archive bot for self-hosted channels. It runs in polling mo
 
 ## Features
 
-- X/Twitter, Pixiv, and Poipiku link submission
+- X/Twitter, Pixiv, Poipiku, and Danbooru post submission
 - Admin submissions publish directly; regular user submissions go to review
 - Optional R-18 routing to a second channel
 - Anime image rating with `deepghs/anime_rating` model `mobilenetv3_sce_dist`
@@ -176,6 +176,23 @@ WEB_BOOKMARKS_MAX_PAGES=4
 ```
 
 Use an account that can view the target posts. If the downloaded image is only a placeholder, refresh the cookie file and retry the submission with `/retry <id|url>`.
+
+## Danbooru Posts
+
+Danbooru single post URLs are supported through `gallery-dl`:
+
+```text
+https://danbooru.donmai.us/posts/1234567
+```
+
+Optional login:
+
+```env
+DANBOORU_USERNAME=your_danbooru_username
+DANBOORU_PASSWORD=your_danbooru_api_key_or_password
+```
+
+Only single post URLs are supported by the bot by default. Search and pool URLs are intentionally not matched to avoid accidentally posting a large batch. Danbooru `rating=q` and `rating=e` route as R-18 when R-18 routing is enabled.
 
 ## Bot Commands
 

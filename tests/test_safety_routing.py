@@ -44,6 +44,25 @@ async def test_twitter_sensitive_metadata_routes_to_r18_without_image_detection(
 
 
 @pytest.mark.asyncio
+async def test_danbooru_explicit_rating_routes_to_r18_without_image_detection(app_factory, sample_media):
+    url = "https://danbooru.donmai.us/posts/1234567"
+    detector = FakeSafetyDetector([0.0])
+    service, db, bot, _ = app_factory(
+        {url: ([sample_media["jpg"]], {"canonical_url": url, "rating": "e", "author_name": "artist"})},
+        r18_channel="@r18",
+        safety_detector=detector,
+    )
+
+    result = await service.api_submit(url, "api-token", "127.0.0.1")
+
+    assert result.status == 200
+    assert db.get_submission(result.body["submission_id"]).provider == "danbooru"
+    assert detector.calls == []
+    assert bot.calls[0]["method"] == "send_photo"
+    assert bot.calls[0]["chat_id"] == "@r18"
+
+
+@pytest.mark.asyncio
 async def test_twitter_image_detection_checks_at_most_four_images(app_factory, tmp_path):
     url = "https://twitter.com/u/status/201"
     media = [make_image(tmp_path / "twitter" / f"{index}.jpg") for index in range(5)]

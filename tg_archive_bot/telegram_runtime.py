@@ -145,7 +145,12 @@ async def main() -> None:
     archive_bot = ArchiveBot(
         config,
         db,
-        GalleryDownloader(config.media_dir, cookies_path=config.gallery_dl_cookies),
+        GalleryDownloader(
+            config.media_dir,
+            cookies_path=config.gallery_dl_cookies,
+            danbooru_username=config.danbooru_username,
+            danbooru_password=config.danbooru_password,
+        ),
         TelegramBotClient(application.bot),
         safety_detector=create_image_safety_detector(config),
     )

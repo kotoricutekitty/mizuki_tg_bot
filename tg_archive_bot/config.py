@@ -47,6 +47,8 @@ class BotConfig:
     web_bookmarks_max_results: int = 20
     web_bookmarks_max_pages: int = 4
     gallery_dl_cookies: Path | None = None
+    danbooru_username: str = ""
+    danbooru_password: str = ""
 
     @classmethod
     def from_env(cls, base_dir: Path | None = None) -> "BotConfig":
@@ -95,6 +97,8 @@ class BotConfig:
             web_bookmarks_max_results=int(os.getenv("WEB_BOOKMARKS_MAX_RESULTS", "20")),
             web_bookmarks_max_pages=int(os.getenv("WEB_BOOKMARKS_MAX_PAGES", "4")),
             gallery_dl_cookies=gallery_dl_cookies,
+            danbooru_username=os.getenv("DANBOORU_USERNAME", ""),
+            danbooru_password=os.getenv("DANBOORU_PASSWORD", ""),
         )
 
     def validate_runtime(self) -> None:

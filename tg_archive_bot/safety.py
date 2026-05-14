@@ -114,6 +114,9 @@ def metadata_r18_reason(metadata: dict[str, Any]) -> str | None:
     x_restrict = metadata.get("x_restrict")
     if str(x_restrict) in {"1", "2"}:
         return f"pixiv x_restrict={x_restrict}"
+    danbooru_rating = str(metadata.get("rating") or "").lower()
+    if danbooru_rating in {"q", "e"}:
+        return f"danbooru rating={danbooru_rating}"
     lowered = " ".join(flatten_metadata_values(metadata)).lower()
     if any(marker in lowered for marker in ("r-18g", "r18g", "r-18", "r18", "nsfw", "adult")):
         return "metadata contains r18 marker"

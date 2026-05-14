@@ -28,9 +28,17 @@ class Downloader(Protocol):
 
 
 class GalleryDownloader:
-    def __init__(self, media_dir: Path, cookies_path: Path | None = None):
+    def __init__(
+        self,
+        media_dir: Path,
+        cookies_path: Path | None = None,
+        danbooru_username: str = "",
+        danbooru_password: str = "",
+    ):
         self.media_dir = media_dir
         self.cookies_path = cookies_path
+        self.danbooru_username = danbooru_username
+        self.danbooru_password = danbooru_password
 
     async def download_media(self, url: str) -> tuple[list[str], dict]:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -87,6 +95,13 @@ class GalleryDownloader:
             ]
             if self.cookies_path and self.cookies_path.exists():
                 command.extend(["--cookies", str(self.cookies_path)])
+            if "danbooru.donmai.us" in url and self.danbooru_username and self.danbooru_password:
+                command.extend([
+                    "-o",
+                    f"extractor.danbooru.username={self.danbooru_username}",
+                    "-o",
+                    f"extractor.danbooru.password={self.danbooru_password}",
+                ])
             command.append(url)
             proc = await asyncio.create_subprocess_exec(
                 *command,
@@ -99,8 +114,9 @@ class GalleryDownloader:
                 return [], metadata
 
             media_files: list[str] = []
-            for root, _, files in os.walk(output_dir):
-                for file in files:
+            for root, dirs, files in os.walk(output_dir):
+                dirs.sort()
+                for file in sorted(files):
                     file_path = Path(root) / file
                     ext = file.lower().split(".")[-1]
                     if file.endswith("_metadata.json") or file.endswith(".json"):
@@ -110,6 +126,7 @@ class GalleryDownloader:
                     elif ext == "zip":
                         converted = await self._convert_ugoira(file_path)
                         media_files.append(str(converted or file_path))
+            media_files = sorted(media_files)
             if "poipiku.com" in url:
                 media_files = filter_poipiku_placeholders(media_files)
                 if not media_files:
@@ -161,7 +178,31 @@ class GalleryDownloader:
             for key in ("age_limit", "rating", "tags", "nsfw", "adult"):
                 if key in data:
                     metadata[key] = data.get(key)
-        metadata["canonical_url"] = url
+        elif "danbooru.donmai.us" in url:
+            metadata["author_name"] = danbooru_artist_name(data)
+            metadata["title"] = ""
+            metadata["text"] = ""
+            post_id = data.get("id") or data.get("post_id")
+            if post_id:
+                metadata["canonical_url"] = f"https://danbooru.donmai.us/posts/{post_id}"
+            for key in (
+                "rating",
+                "tag_string",
+                "tag_string_artist",
+                "tag_string_character",
+                "tag_string_copyright",
+                "tag_string_general",
+                "tag_string_meta",
+                "source",
+                "pixiv_id",
+                "md5",
+                "file_ext",
+                "image_width",
+                "image_height",
+            ):
+                if key in data:
+                    metadata[key] = data.get(key)
+        metadata.setdefault("canonical_url", url)
 
     async def _convert_ugoira(self, file_path: Path) -> Path | None:
         metadata_file = Path(str(file_path) + ".json")
@@ -228,6 +269,18 @@ def download_url(url: str, filepath: Path) -> None:
             filepath.write_bytes(response.read())
     except urllib.error.HTTPError as exc:
         raise RuntimeError(f"download failed: {exc.code}") from exc
+
+
+def danbooru_artist_name(data: dict) -> str:
+    tag_string_artist = str(data.get("tag_string_artist") or "").strip()
+    if tag_string_artist:
+        return tag_string_artist.replace("_", " ")
+    tags = data.get("tags")
+    if isinstance(tags, dict):
+        artists = tags.get("artist") or tags.get("artists")
+        if isinstance(artists, list) and artists:
+            return str(artists[0]).replace("_", " ")
+    return ""
 
 
 def download_poipiku_append_files(

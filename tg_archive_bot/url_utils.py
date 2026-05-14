@@ -6,6 +6,7 @@ URL_PATTERNS = [
     re.compile(r"https?://(?:www\.)?(?:twitter|x|fxtwitter|vxtwitter|fixupx)\.com/\w+/status/\d+"),
     re.compile(r"https?://(?:www\.)?pixiv\.net/(?:en/)?artworks/\d+"),
     re.compile(r"https?://(?:www\.)?poipiku\.com/(?:UserIllustShow\.jsp\?illust_id=\d+|\d+/\d+\.html)"),
+    re.compile(r"https?://(?:www\.)?danbooru\.donmai\.us/posts/\d+(?:[?#][^\s]*)?"),
 ]
 
 
@@ -17,6 +18,11 @@ def normalize_url(url: str) -> str:
     )
     if "twitter.com/" in normalized and "/status/" in normalized:
         normalized = re.sub(r"(/status/\d+).*", r"\1", normalized)
+    normalized = re.sub(
+        r"https?://(?:www\.)?danbooru\.donmai\.us/posts/(\d+).*",
+        r"https://danbooru.donmai.us/posts/\1",
+        normalized,
+    )
     return normalized
 
 
@@ -37,6 +43,8 @@ def extract_urls_from_text(text: str) -> list[str]:
 
 def provider_for_url(url: str) -> str:
     lowered = url.lower()
+    if "danbooru.donmai.us" in lowered:
+        return "danbooru"
     if "pixiv.net" in lowered:
         return "pixiv"
     if "poipiku.com" in lowered:

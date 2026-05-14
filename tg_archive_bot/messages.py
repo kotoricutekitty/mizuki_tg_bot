@@ -8,7 +8,7 @@ from html import escape, unescape
 START_TEXT = (
     "欢迎使用 mizuki bot 喵～！\n\n"
     "把想归档的链接直接丢给我就好喵！\n"
-    "目前支持 X/Twitter、Pixiv、Poipiku 等站点。\n\n"
+    "目前支持 X/Twitter、Pixiv、Poipiku、Danbooru 等站点。\n\n"
     "也可以直接发送图片，mizuki 会努力帮你找来源喵～\n\n"
     "管理员投稿会直接发布到频道，普通用户投稿会先进入审核喵。\n"
     "请放心投喂喵～！维护请找会上网的家猫 @kotokotori 喵～"
@@ -16,7 +16,7 @@ START_TEXT = (
 
 HELP_TEXT = (
     "📖 mizuki 使用小纸条喵～\n\n"
-    "把 X/Twitter、Pixiv、Poipiku 链接直接丢给我就可以投稿啦喵。\n"
+    "把 X/Twitter、Pixiv、Poipiku、Danbooru 链接直接丢给我就可以投稿啦喵。\n"
     "一次发好几个链接也没问题，我会乖乖排队处理喵。\n\n"
     "想取回频道里发过的原图，用 /original 看说明就好喵。"
 )

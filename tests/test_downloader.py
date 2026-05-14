@@ -53,3 +53,31 @@ def test_load_cookie_header_reads_browser_json_cookie_file(tmp_path: Path):
     )
 
     assert downloader.load_cookie_header(cookie_file) == "PHPSESSID=user_session; device_token=device"
+
+
+def test_danbooru_metadata_mapping(tmp_path: Path):
+    metadata_file = tmp_path / "post_metadata.json"
+    metadata_file.write_text(
+        """
+        {
+          "id": 1234567,
+          "rating": "e",
+          "tag_string_artist": "artist_name",
+          "tag_string_character": "character_name",
+          "tag_string_copyright": "copyright_name",
+          "source": "https://example.test/source",
+          "md5": "abc"
+        }
+        """,
+        encoding="utf-8",
+    )
+    metadata = {}
+    gallery_downloader = downloader.GalleryDownloader(tmp_path)
+
+    gallery_downloader._merge_metadata(metadata_file, "https://danbooru.donmai.us/posts/1234567?foo=bar", metadata)
+
+    assert metadata["author_name"] == "artist name"
+    assert metadata["text"] == ""
+    assert metadata["rating"] == "e"
+    assert metadata["tag_string_character"] == "character_name"
+    assert metadata["canonical_url"] == "https://danbooru.donmai.us/posts/1234567"

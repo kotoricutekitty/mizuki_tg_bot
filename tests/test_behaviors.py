@@ -950,6 +950,25 @@ def test_find_by_url_matches_twitter_status_id_across_url_shapes(app_factory, sa
     assert existing.id == 1
 
 
+def test_find_by_url_matches_danbooru_post_with_query(app_factory, sample_media):
+    service, db, *_ = app_factory()
+    url = "https://danbooru.donmai.us/posts/1234567"
+    db.create_submission(
+        user_id=1,
+        username="admin",
+        url=url,
+        status="approved",
+        media_paths=[sample_media["jpg"]],
+        metadata={"canonical_url": url},
+        now=service.clock.now(),
+    )
+
+    existing = db.find_by_url("https://danbooru.donmai.us/posts/1234567?pool_id=42")
+
+    assert existing is not None
+    assert existing.id == 1
+
+
 @pytest.mark.asyncio
 async def test_bookmark_submit_detects_existing_twitter_status_id(app_factory, sample_media):
     service, db, bot, downloader = app_factory()
