@@ -193,6 +193,7 @@ Admin commands:
 ```text
 pending - Show pending review submissions
 find <id|url> - Query a submission
+select <url> <1,2,3> - Publish only selected media indexes from a multi-image post
 retry <id|url> - Re-download or re-publish a submission
 delete <id|url> - Soft-delete a submission and release duplicate detection
 stats - Show submission statistics

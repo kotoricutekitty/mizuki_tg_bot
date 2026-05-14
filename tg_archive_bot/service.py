@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import os
 import json
+import re
 import traceback
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -237,6 +238,104 @@ class ArchiveBot:
             return
         await self.admin_delete_submission(submission, update.effective_user.id)
         await update.message.reply_text(messages.delete_success(submission.id))
+
+    async def select_command(self, update: Any, context: Any = None) -> None:
+        if update.effective_user.id not in self.config.admin_ids:
+            await update.message.reply_text(messages.PERMISSION_DENIED)
+            return
+        parsed = parse_select_command(context)
+        if not parsed:
+            await update.message.reply_text(messages.select_usage())
+            return
+        url, indexes = parsed
+        normalized_url = normalize_url(url)
+        existing = self.db.find_by_url(normalized_url)
+        if existing:
+            result = await self.select_submission_media(existing, indexes, update.effective_user.id)
+            if result == "invalid":
+                await update.message.reply_text(messages.select_invalid_indexes(len(existing.media_paths)))
+            elif result == "pending":
+                await update.message.reply_text(messages.select_pending(normalized_url, indexes))
+            else:
+                await update.message.reply_text(messages.select_published(normalized_url, indexes))
+            return
+        if "pixiv.net" in normalized_url:
+            count, _, _ = self.db.count_pixiv_downloads(self.config.pixiv_limit_hours)
+            if count >= self.config.pixiv_limit_count:
+                await update.message.reply_text(messages.PIXIV_RATE_LIMITED)
+                return
+            self.db.record_pixiv_download(normalized_url)
+        await update.message.reply_text(messages.select_started(normalized_url, indexes))
+        media_files, metadata = await self.downloader.download_media(normalized_url)
+        if not media_files:
+            await update.message.reply_text(messages.download_failed(normalized_url))
+            return
+        selected_media = select_media_files(media_files, indexes)
+        if selected_media is None:
+            await update.message.reply_text(messages.select_invalid_indexes(len(media_files)))
+            return
+        metadata = dict(metadata)
+        metadata["selected_media_indexes"] = indexes
+        metadata["selected_media_count"] = len(selected_media)
+        metadata["original_media_count"] = len(media_files)
+        existing = self.find_existing_submission_from_metadata(normalized_url, metadata)
+        if existing:
+            result = await self.select_submission_media(existing, indexes, update.effective_user.id)
+            if result == "invalid":
+                await update.message.reply_text(messages.select_invalid_indexes(len(existing.media_paths)))
+            elif result == "pending":
+                await update.message.reply_text(messages.select_pending(normalized_url, indexes))
+            else:
+                await update.message.reply_text(messages.select_published(normalized_url, indexes))
+            return
+        safety_decision = await self.classify_downloaded_content(normalized_url, selected_media, metadata)
+        status = "pending" if safety_decision.rating == "uncertain" else "approved"
+        submission_id = self.db.create_submission(
+            user_id=update.effective_user.id,
+            username=update.effective_user.username or str(update.effective_user.id),
+            url=normalized_url,
+            status=status,
+            media_paths=media_files,
+            metadata=metadata,
+            now=self.clock.now(),
+        )
+        if status == "pending":
+            await self.send_to_review(submission_id, normalized_url, update.effective_user.username or "select", selected_media, metadata)
+            await update.message.reply_text(messages.select_pending(normalized_url, indexes))
+            return
+        await self.publish_submission(submission_id, update.effective_user.id)
+        await update.message.reply_text(messages.select_published(normalized_url, indexes))
+
+    async def select_submission_media(self, submission: Submission, indexes: list[int], admin_id: int) -> str:
+        selected_media = select_media_files(submission.media_paths, indexes)
+        if selected_media is None:
+            return "invalid"
+        metadata = submission_metadata(submission)
+        metadata["selected_media_indexes"] = indexes
+        metadata["selected_media_count"] = len(selected_media)
+        metadata["original_media_count"] = len(submission.media_paths)
+        if submission.status == "approved":
+            source_channel = str(metadata.get("channel_id") or self.publish_channel_for_submission(submission))
+            for message_id in published_message_ids(submission):
+                try:
+                    await self.bot.delete_message(source_channel, message_id)
+                except Exception as exc:
+                    logging.warning("删除频道消息失败: channel=%s message_id=%s error=%s", source_channel, message_id, exc)
+            metadata.pop("channel_message_ids", None)
+            metadata.pop("channel_id", None)
+        self.db.update_metadata(submission.id, metadata, self.clock.now())
+        if submission.status == "pending":
+            await self.send_to_review(submission.id, submission.url, submission.username or "select", selected_media, metadata)
+            return "pending"
+        await self.publish_submission(submission.id, admin_id)
+        self.db.log_moderation_action(
+            submission_id=submission.id,
+            action="select_media",
+            admin_id=admin_id,
+            detail=",".join(str(index) for index in indexes),
+            now=self.clock.now(),
+        )
+        return "published"
 
     async def retry_command(self, update: Any, context: Any = None) -> None:
         if update.effective_user.id not in self.config.admin_ids:
@@ -509,7 +608,7 @@ class ArchiveBot:
         )
         channel_message_id: int | None = None
         channel_message_ids: list[int] = []
-        media_files = submission.media_paths
+        media_files = published_media_paths(submission)
         if not media_files:
             logging.error("发布失败: 投稿 #%s 没有媒体", submission_id)
             return None
@@ -563,7 +662,7 @@ class ArchiveBot:
             submission.id,
             "r18" if str(target_channel) == self.config.r18_channel_id else "safe",
         )
-        preview = first_existing_photo(submission.media_paths)
+        preview = first_existing_photo(published_media_paths(submission))
         sent_any = False
         for admin_id in self.config.admin_ids:
             try:
@@ -1012,6 +1111,55 @@ def collect_message_text(message: Any) -> str:
 def command_target(context: Any) -> str:
     args = getattr(context, "args", []) if context is not None else []
     return " ".join(str(arg) for arg in args).strip()
+
+
+def parse_select_command(context: Any) -> tuple[str, list[int]] | None:
+    target = command_target(context)
+    urls = extract_urls_from_text(target)
+    if not urls:
+        return None
+    url = urls[0]
+    selection_text = target.replace(url, "", 1).strip()
+    if not selection_text:
+        return None
+    tokens = [token for token in re.split(r"[\s,，]+", selection_text) if token]
+    if not tokens or any(not token.isdigit() for token in tokens):
+        return None
+    indexes: list[int] = []
+    seen: set[int] = set()
+    for token in tokens:
+        index = int(token)
+        if index in seen:
+            continue
+        seen.add(index)
+        indexes.append(index)
+    return url, indexes
+
+
+def select_media_files(media_files: list[str], indexes: list[int]) -> list[str] | None:
+    if not indexes:
+        return None
+    selected: list[str] = []
+    for index in indexes:
+        if index < 1 or index > len(media_files):
+            return None
+        selected.append(media_files[index - 1])
+    return selected
+
+
+def published_media_paths(submission: Submission) -> list[str]:
+    metadata = submission_metadata(submission)
+    raw_indexes = metadata.get("selected_media_indexes")
+    if not isinstance(raw_indexes, list):
+        return submission.media_paths
+    indexes: list[int] = []
+    for raw_index in raw_indexes:
+        try:
+            indexes.append(int(raw_index))
+        except (TypeError, ValueError):
+            return submission.media_paths
+    selected = select_media_files(submission.media_paths, indexes)
+    return selected or submission.media_paths
 
 
 def build_media_group(

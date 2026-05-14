@@ -162,6 +162,7 @@ async def main() -> None:
     application.add_handler(CommandHandler("set", archive_bot.set_command))
     application.add_handler(CommandHandler("pending", archive_bot.pending_command))
     application.add_handler(CommandHandler("find", archive_bot.find_command))
+    application.add_handler(CommandHandler("select", archive_bot.select_command))
     application.add_handler(CommandHandler("retry", archive_bot.retry_command))
     application.add_handler(CommandHandler("delete", archive_bot.delete_command))
     application.add_handler(CommandHandler("stats", archive_bot.stats_command))

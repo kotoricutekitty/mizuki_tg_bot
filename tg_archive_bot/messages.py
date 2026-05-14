@@ -25,6 +25,7 @@ ADMIN_HELP_TEXT = (
     "🛠 管理员小工具箱喵～\n\n"
     "/pending - 看看有没有等摸头审核的投稿喵\n"
     "/find <id|url> - 查询投稿记录喵\n"
+    "/select <url> <1,2,3> - 修改频道里发布的图片序号喵\n"
     "/retry <id|url> - 重新下载/发布投稿喵\n"
     "/delete <id|url> - 删除投稿并解除查重喵\n"
     "/stats - 查看投稿统计喵\n"
@@ -128,6 +129,29 @@ def submission_summary(submission, metadata: dict) -> str:
 
 def retry_started(submission_id: int, url: str) -> str:
     return f"收到喵，开始重新处理投稿 #{submission_id}：{url}"
+
+
+def select_usage() -> str:
+    return "用法喵：/select <pixiv_url> <1,2,3>"
+
+
+def select_started(url: str, indexes: list[int]) -> str:
+    index_text = ",".join(str(index) for index in indexes)
+    return f"收到喵，开始选择第 {index_text} 张：{url}"
+
+
+def select_invalid_indexes(total: int) -> str:
+    return f"呜喵...选择的图片序号不对喵，可用范围是 1-{total}"
+
+
+def select_published(url: str, indexes: list[int]) -> str:
+    index_text = ",".join(str(index) for index in indexes)
+    return f"投稿已发布喵：{url}\n已选择图片：{index_text}"
+
+
+def select_pending(url: str, indexes: list[int]) -> str:
+    index_text = ",".join(str(index) for index in indexes)
+    return f"投稿已进入审核喵：{url}\n已选择图片：{index_text}"
 
 
 def retry_failed(submission_id: int, url: str) -> str:

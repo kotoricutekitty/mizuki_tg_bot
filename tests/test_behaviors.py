@@ -10,6 +10,7 @@ from tg_archive_bot import messages
 from tests.fakes import (
     FakeCallbackQuery,
     FakeChat,
+    FakeContext,
     FakeEntity,
     FakeForwardOrigin,
     FakeMessage,
@@ -243,6 +244,7 @@ async def test_set_usage_and_non_admin_command_permissions(app_factory):
         service.pixiv_status_command,
         service.nsfw_threshold_command,
         service.find_command,
+        service.select_command,
         service.retry_command,
         service.delete_command,
         service.stats_command,
@@ -573,6 +575,92 @@ async def test_admin_deletes_published_submission_from_forward_buttons(app_facto
     assert metadata["deleted_by"] == 1
     assert db.find_by_url("https://twitter.com/u/status/delete-me") is None
     assert query.edited_caption == "original\n\n🗑️ 已经删除啦喵 by @admin"
+
+
+@pytest.mark.asyncio
+async def test_select_new_pixiv_keeps_all_media_but_publishes_selected_indexes(app_factory, tmp_path):
+    url = "https://www.pixiv.net/artworks/424242"
+    media = [make_image(tmp_path / "select-new" / f"{index}.jpg") for index in range(4)]
+    service, db, bot, downloader = app_factory({
+        url: (media, {"canonical_url": url, "author_name": "artist", "text": "set"}),
+    })
+    message = FakeMessage()
+
+    await service.select_command(
+        FakeUpdate(FakeUser(1, "admin"), message=message),
+        FakeContext([url, "1,3"]),
+    )
+
+    submission = db.get_submission(1)
+    metadata = json.loads(submission.metadata_json)
+    assert downloader.calls == [url]
+    assert submission.status == "approved"
+    assert submission.media_paths == media
+    assert metadata["selected_media_indexes"] == [1, 3]
+    assert metadata["selected_media_count"] == 2
+    assert metadata["original_media_count"] == 4
+    assert bot.calls[0]["method"] == "send_media_group"
+    assert [item["media"] for item in bot.calls[0]["media"]] == [media[0], media[2]]
+    assert message.replies[-1]["text"] == messages.select_published(url, [1, 3])
+    assert db.find_by_url(url).id == 1
+
+
+@pytest.mark.asyncio
+async def test_select_existing_submission_replaces_split_channel_messages(app_factory, tmp_path):
+    url = "https://www.pixiv.net/artworks/525252"
+    media = [make_image(tmp_path / "select-existing" / f"{index}.jpg") for index in range(12)]
+    service, db, bot, _ = app_factory()
+    sub_id = db.create_submission(
+        user_id=1,
+        username="admin",
+        url=url,
+        status="approved",
+        media_paths=media,
+        metadata={"canonical_url": url, "channel_id": "@archive", "channel_message_ids": [10, 11, 12]},
+        now=service.clock.now(),
+    )
+    db.update_message_id(sub_id, 10, service.clock.now())
+    message = FakeMessage()
+
+    await service.select_command(
+        FakeUpdate(FakeUser(1, "admin"), message=message),
+        FakeContext([url, "2,4,6,8,10,12"]),
+    )
+
+    delete_calls = [call for call in bot.calls if call["method"] == "delete_message"]
+    groups = [call for call in bot.calls if call["method"] == "send_media_group"]
+    submission = db.get_submission(sub_id)
+    metadata = json.loads(submission.metadata_json)
+    assert delete_calls == [
+        {"method": "delete_message", "chat_id": "@archive", "message_id": 10},
+        {"method": "delete_message", "chat_id": "@archive", "message_id": 11},
+        {"method": "delete_message", "chat_id": "@archive", "message_id": 12},
+    ]
+    assert len(groups) == 2
+    assert [item["media"] for item in groups[0]["media"]] == [media[1], media[3], media[5], media[7], media[9]]
+    assert [item["media"] for item in groups[1]["media"]] == [media[11]]
+    assert submission.media_paths == media
+    assert metadata["selected_media_indexes"] == [2, 4, 6, 8, 10, 12]
+    assert metadata["channel_message_ids"] == list(range(101, 107))
+    assert message.replies[-1]["text"] == messages.select_published(url, [2, 4, 6, 8, 10, 12])
+
+
+@pytest.mark.asyncio
+async def test_select_invalid_index_does_not_create_submission(app_factory, tmp_path):
+    url = "https://www.pixiv.net/artworks/626262"
+    media = [make_image(tmp_path / "select-invalid" / f"{index}.jpg") for index in range(2)]
+    service, db, bot, downloader = app_factory({url: (media, {"canonical_url": url})})
+    message = FakeMessage()
+
+    await service.select_command(
+        FakeUpdate(FakeUser(1, "admin"), message=message),
+        FakeContext([url, "3"]),
+    )
+
+    assert downloader.calls == [url]
+    assert bot.calls == []
+    assert db.find_by_url(url) is None
+    assert message.replies[-1]["text"] == messages.select_invalid_indexes(2)
 
 
 @pytest.mark.asyncio
