@@ -19,6 +19,7 @@ from .safety import ImageSafetyDetector, SafetyDecision, classify_safety
 from .url_utils import extract_urls_from_text, normalize_url
 
 PUBLISH_MEDIA_GROUP_SIZE = 5
+ADMIN_NOTICE_METADATA_KEY = "admin_notice_messages"
 
 
 class Clock(Protocol):
@@ -48,6 +49,12 @@ class BotClient(Protocol):
         ...
 
     async def delete_message(self, chat_id: int | str, message_id: int) -> Any:
+        ...
+
+    async def edit_message_text(self, chat_id: int | str, message_id: int, text: str, **kwargs: Any) -> Any:
+        ...
+
+    async def edit_message_caption(self, chat_id: int | str, message_id: int, caption: str, **kwargs: Any) -> Any:
         ...
 
 
@@ -498,11 +505,14 @@ class ArchiveBot:
                 if is_admin and submission_id in self._moderation_notified_submission_ids:
                     await self.delete_status_message(user_id, status_message)
                 else:
+                    published_text = messages.admin_published(url, self.published_channel_for_submission_id(submission_id))
                     await update_status_message(
                         status_message,
-                        messages.admin_published(url, self.published_channel_for_submission_id(submission_id)),
+                        published_text,
                         update.message,
                     )
+                    if is_admin and status_message is not None:
+                        self.record_admin_notice(submission_id, user_id, status_message, "text", published_text)
             else:
                 review_message = await self.send_to_review(submission_id, url, username, media_files, metadata)
                 if review_message:
@@ -592,14 +602,18 @@ class ArchiveBot:
             try:
                 if len(media_files) == 1:
                     sent = await self._send_single_media(admin_id, media_files[0], text, reply_markup)
+                    self.record_admin_notice(submission_id, admin_id, sent, "caption", text)
                     sent_messages.append(sent)
                 else:
                     media = build_media_group(media_files[:10], text)
                     sent_media = await self.bot.send_media_group(chat_id=admin_id, media=media)
                     target = sent_media[-1] if sent_media else None
                     if target and hasattr(target, "reply_text"):
-                        sent_messages.append(await target.reply_text("请审核：", reply_markup=reply_markup))
+                        sent = await target.reply_text("请审核：", reply_markup=reply_markup)
+                        self.record_admin_notice(submission_id, admin_id, sent, "text", "请审核：")
+                        sent_messages.append(sent)
                     elif target:
+                        self.record_admin_notice(submission_id, admin_id, target, "caption", text)
                         sent_messages.append(target)
             except Exception as exc:
                 logging.error("无法给管理员%s发送审核消息: %s", admin_id, exc)
@@ -678,17 +692,23 @@ class ArchiveBot:
         sent_any = False
         for admin_id in self.config.admin_ids:
             try:
+                if self.admin_notice_for(submission, admin_id):
+                    if await self.edit_admin_notice(submission, admin_id, caption, reply_markup=reply_markup):
+                        sent_any = True
+                        continue
                 if preview:
-                    await self.bot.send_photo(
+                    sent = await self.bot.send_photo(
                         chat_id=admin_id,
                         photo=preview_media_value(preview),
                         caption=caption,
                         reply_markup=reply_markup,
                     )
+                    self.record_admin_notice(submission.id, admin_id, sent, "caption", caption)
                     self.note_preview_message(admin_id, preview)
                     sent_any = True
                 else:
-                    await self.bot.send_message(admin_id, caption, reply_markup=reply_markup)
+                    sent = await self.bot.send_message(admin_id, caption, reply_markup=reply_markup)
+                    self.record_admin_notice(submission.id, admin_id, sent, "text", caption)
                     self.note_text_message(admin_id)
                     sent_any = True
             except Exception as exc:
@@ -744,38 +764,63 @@ class ArchiveBot:
             return
         if action in {"move_r18", "move_safe"}:
             source_key = parts[2] if len(parts) > 2 else ""
+            query_is_recorded = self.is_recorded_admin_notice(submission, user_id, getattr(query.message, "message_id", None))
             await self.move_published_submission(submission, action, source_key, user_id)
-            await edit_callback_message(query, messages.callback_approved(existing_caption, username))
+            updated_submission = self.db.get_submission(submission_id)
+            notice_text = self.admin_notice_status_text(updated_submission, "approved", username) if updated_submission else messages.callback_approved(existing_caption, username)
+            await self.update_admin_notices(submission_id, notice_text, self.moderation_reply_markup_for_submission(updated_submission) if updated_submission else None)
+            if not query_is_recorded:
+                await edit_callback_message(query, notice_text)
             return
         if action == "delete_post":
             source_key = parts[2] if len(parts) > 2 else ""
+            query_is_recorded = self.is_recorded_admin_notice(submission, user_id, getattr(query.message, "message_id", None))
             await self.delete_published_submission(submission, source_key, user_id)
-            await edit_callback_message(query, messages.callback_deleted(existing_caption, username))
+            updated_submission = self.db.get_submission(submission_id)
+            notice_text = self.admin_notice_status_text(updated_submission, "deleted", username) if updated_submission else messages.callback_deleted(existing_caption, username)
+            await self.update_admin_notices(submission_id, notice_text)
+            if not query_is_recorded:
+                await edit_callback_message(query, notice_text)
             return
         if submission.status != "pending":
             await query.edit_message_caption(caption=messages.callback_already_done(existing_caption, submission.status))
             return
         if action == "approve_r18":
+            query_is_recorded = self.is_recorded_admin_notice(submission, user_id, getattr(query.message, "message_id", None))
             metadata = submission_metadata(submission)
             metadata["safety_rating"] = "r18"
             metadata["safety_reason"] = metadata.get("safety_reason") or "admin selected r18"
             self.db.update_metadata(submission_id, metadata, self.clock.now())
             await self.publish_submission(submission_id, user_id)
-            await query.edit_message_caption(caption=messages.callback_approved(existing_caption, username))
+            updated_submission = self.db.get_submission(submission_id)
+            notice_text = self.admin_notice_status_text(updated_submission, "approved", username) if updated_submission else messages.callback_approved(existing_caption, username)
+            await self.update_admin_notices(submission_id, notice_text, self.moderation_reply_markup_for_submission(updated_submission) if updated_submission else None)
+            if not query_is_recorded:
+                await edit_callback_message(query, notice_text)
             try:
                 await self.send_submission_message(submission.user_id, submission, messages.submitter_approved(submission.url))
             except Exception as exc:
                 logging.warning("无法通知投稿者 %s: %s", submission.user_id, exc)
         elif action == "approve":
+            query_is_recorded = self.is_recorded_admin_notice(submission, user_id, getattr(query.message, "message_id", None))
             await self.publish_submission(submission_id, user_id)
-            await query.edit_message_caption(caption=messages.callback_approved(existing_caption, username))
+            updated_submission = self.db.get_submission(submission_id)
+            notice_text = self.admin_notice_status_text(updated_submission, "approved", username) if updated_submission else messages.callback_approved(existing_caption, username)
+            await self.update_admin_notices(submission_id, notice_text, self.moderation_reply_markup_for_submission(updated_submission) if updated_submission else None)
+            if not query_is_recorded:
+                await edit_callback_message(query, notice_text)
             try:
                 await self.send_submission_message(submission.user_id, submission, messages.submitter_approved(submission.url))
             except Exception as exc:
                 logging.warning("无法通知投稿者 %s: %s", submission.user_id, exc)
         elif action == "reject":
+            query_is_recorded = self.is_recorded_admin_notice(submission, user_id, getattr(query.message, "message_id", None))
             self.db.update_status(submission_id, "rejected", user_id, self.clock.now())
-            await query.edit_message_caption(caption=messages.callback_rejected(existing_caption, username))
+            updated_submission = self.db.get_submission(submission_id)
+            notice_text = self.admin_notice_status_text(updated_submission, "rejected", username) if updated_submission else messages.callback_rejected(existing_caption, username)
+            await self.update_admin_notices(submission_id, notice_text)
+            if not query_is_recorded:
+                await edit_callback_message(query, notice_text)
             try:
                 await self.send_submission_message(submission.user_id, submission, messages.submitter_rejected(submission.url))
             except Exception as exc:
@@ -889,7 +934,7 @@ class ArchiveBot:
                 channel = self.published_channel_for_submission_id(submission_id)
                 text = messages.api_notify(submission_id, normalized_url, metadata, channel)
                 if submission:
-                    await self.send_submission_message(admin, submission, text)
+                    await self.send_admin_notice(admin, submission, text)
                 else:
                     await self.bot.send_message(admin, text)
             except Exception as exc:
@@ -904,6 +949,129 @@ class ArchiveBot:
         sent = await self.bot.send_message(chat_id, text, **kwargs)
         self.note_text_message(chat_id)
         return sent
+
+    async def send_admin_notice(self, admin_id: int | str, submission: Submission, text: str, **kwargs: Any) -> Any:
+        preview = first_existing_photo(submission.media_paths)
+        if preview and self.should_send_preview(admin_id, preview):
+            sent = await self.bot.send_photo(chat_id=admin_id, photo=preview_media_value(preview), caption=text, **kwargs)
+            self.note_preview_message(admin_id, preview)
+            self.record_admin_notice(submission.id, admin_id, sent, "caption", text)
+            return sent
+        sent = await self.bot.send_message(admin_id, text, **kwargs)
+        self.note_text_message(admin_id)
+        self.record_admin_notice(submission.id, admin_id, sent, "text", text)
+        return sent
+
+    def record_admin_notice(self, submission_id: int, admin_id: int | str, sent_message: Any, edit_kind: str, text: str) -> None:
+        message_id = getattr(sent_message, "message_id", None)
+        if not message_id:
+            return
+        submission = self.db.get_submission(submission_id)
+        if not submission:
+            return
+        metadata = submission_metadata(submission)
+        notices = metadata.get(ADMIN_NOTICE_METADATA_KEY)
+        if not isinstance(notices, dict):
+            notices = {}
+        notices[str(admin_id)] = {
+            "message_id": int(message_id),
+            "edit_kind": edit_kind,
+            "text": text,
+        }
+        metadata[ADMIN_NOTICE_METADATA_KEY] = notices
+        self.db.update_metadata(submission_id, metadata, self.clock.now())
+
+    def admin_notice_for(self, submission: Submission, admin_id: int | str) -> dict[str, Any] | None:
+        notices = submission_metadata(submission).get(ADMIN_NOTICE_METADATA_KEY)
+        if not isinstance(notices, dict):
+            return None
+        notice = notices.get(str(admin_id))
+        return notice if isinstance(notice, dict) else None
+
+    def is_recorded_admin_notice(self, submission: Submission, admin_id: int | str, message_id: Any) -> bool:
+        if not message_id:
+            return False
+        notice = self.admin_notice_for(submission, admin_id)
+        if not notice:
+            return False
+        try:
+            return int(notice.get("message_id")) == int(message_id)
+        except (TypeError, ValueError):
+            return False
+
+    async def edit_admin_notice(
+        self,
+        submission: Submission,
+        admin_id: int | str,
+        text: str,
+        reply_markup: Any | None = None,
+    ) -> bool:
+        notice = self.admin_notice_for(submission, admin_id)
+        if not notice:
+            return False
+        try:
+            message_id = int(notice.get("message_id"))
+        except (TypeError, ValueError):
+            return False
+        kwargs = {"reply_markup": reply_markup}
+        try:
+            if notice.get("edit_kind") == "text":
+                await self.bot.edit_message_text(chat_id=admin_id, message_id=message_id, text=text, **kwargs)
+            else:
+                await self.bot.edit_message_caption(chat_id=admin_id, message_id=message_id, caption=text, **kwargs)
+        except Exception as exc:
+            if "message is not modified" in str(exc).lower():
+                return True
+            logging.warning("无法编辑管理员%s的投稿通知 #%s: %s", admin_id, message_id, exc)
+            return False
+        self.record_admin_notice(submission.id, admin_id, type("Sent", (), {"message_id": message_id})(), str(notice.get("edit_kind") or "caption"), text)
+        return True
+
+    async def update_admin_notices(
+        self,
+        submission_id: int,
+        text: str,
+        reply_markup: Any | None = None,
+    ) -> None:
+        submission = self.db.get_submission(submission_id)
+        if not submission:
+            return
+        for admin_id in self.config.admin_ids:
+            await self.edit_admin_notice(submission, admin_id, text, reply_markup=reply_markup)
+            submission = self.db.get_submission(submission_id) or submission
+
+    def admin_notice_status_text(self, submission: Submission | None, status: str, username: str) -> str:
+        if not submission:
+            return ""
+        base = self.admin_notice_base_text(submission)
+        if status == "approved":
+            return messages.callback_approved(base, username)
+        if status == "rejected":
+            return messages.callback_rejected(base, username)
+        if status == "deleted":
+            return messages.callback_deleted(base, username)
+        return base
+
+    def admin_notice_base_text(self, submission: Submission) -> str:
+        metadata = submission_metadata(submission)
+        if submission.status in {"approved", "deleted"}:
+            return messages.moderation_caption(
+                submission.id,
+                submission.url,
+                metadata,
+                metadata.get("channel_id") or self.publish_channel_for_submission(submission),
+            )
+        return messages.review_caption(submission.id, submission.username or "", submission.url, metadata)
+
+    def moderation_reply_markup_for_submission(self, submission: Submission | None) -> dict[str, Any] | None:
+        if not submission or not self.config.r18_routing_enabled:
+            return None
+        metadata = submission_metadata(submission)
+        channel = str(metadata.get("channel_id") or self.publish_channel_for_submission(submission))
+        return moderation_reply_markup(
+            submission.id,
+            "r18" if channel == self.config.r18_channel_id else "safe",
+        )
 
     def should_send_preview(self, chat_id: int | str, preview: str) -> bool:
         return self._last_preview_by_chat.get(chat_id) != preview

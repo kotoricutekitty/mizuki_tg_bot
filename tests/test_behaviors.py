@@ -315,7 +315,8 @@ async def test_review_approve(app_factory, sample_media):
     query = FakeCallbackQuery(f"approve:{sub_id}", FakeSentMessage(7, caption="review"))
     await service.handle_callback(FakeUpdate(FakeUser(1, "admin"), callback_query=query))
     assert query.answered
-    assert query.edited_caption == "review\n\n✅ 已经通过啦喵 by @admin"
+    assert "发到频道：@archive" in query.edited_caption
+    assert "✅ 已经通过啦喵 by @admin" in query.edited_caption
     assert db.get_submission(sub_id).status == "approved"
     assert any(call["method"] == "send_photo" and call["chat_id"] == 2 for call in bot.calls)
 
@@ -326,7 +327,8 @@ async def test_review_reject(app_factory, sample_media):
     sub_id = db.create_submission(user_id=2, username="normal", url="https://twitter.com/u/status/2", status="pending", media_paths=[sample_media["jpg"]], metadata={}, now=service.clock.now())
     query = FakeCallbackQuery(f"reject:{sub_id}", FakeSentMessage(8, caption="review"))
     await service.handle_callback(FakeUpdate(FakeUser(1, "admin"), callback_query=query))
-    assert query.edited_caption == "review\n\n❌ 已经被拒绝啦喵 by @admin"
+    assert "新投稿 #1" in query.edited_caption
+    assert "❌ 已经被拒绝啦喵 by @admin" in query.edited_caption
     assert db.get_submission(sub_id).status == "rejected"
     assert bot.calls[-1]["caption"] == messages.submitter_rejected("https://twitter.com/u/status/2")
     assert bot.calls[-1]["photo"] == sample_media["jpg"]
@@ -465,7 +467,8 @@ async def test_admin_moves_published_submission_to_r18_channel(app_factory, samp
     assert bot.calls[1]["method"] == "send_photo"
     assert bot.calls[1]["chat_id"] == "@r18"
     assert db.get_submission(sub_id).message_id == 101
-    assert query.edited_caption == "original\n\n✅ 已经通过啦喵 by @admin"
+    assert "发到频道：@r18" in query.edited_caption
+    assert "✅ 已经通过啦喵 by @admin" in query.edited_caption
     assert query.edited_text is None
 
 
@@ -543,7 +546,40 @@ async def test_admin_moves_published_submission_to_safe_channel(app_factory, sam
     assert bot.calls[1]["method"] == "send_photo"
     assert bot.calls[1]["chat_id"] == "@archive"
     assert db.get_submission(sub_id).message_id == 101
-    assert query.edited_caption == "original\n\n✅ 已经通过啦喵 by @admin"
+    assert "发到频道：@archive" in query.edited_caption
+    assert "✅ 已经通过啦喵 by @admin" in query.edited_caption
+
+
+@pytest.mark.asyncio
+async def test_admin_move_edits_recorded_admin_notice_instead_of_sending_new_admin_message(app_factory, sample_media):
+    service, db, bot, _ = app_factory(channel="@archive", r18_channel="@r18")
+    sub_id = db.create_submission(
+        user_id=2,
+        username="u",
+        url="https://twitter.com/u/status/edit-notice",
+        status="approved",
+        media_paths=[sample_media["jpg"]],
+        metadata={
+            "canonical_url": "https://twitter.com/u/status/edit-notice",
+            "safety_rating": "safe",
+            "channel_message_ids": [555],
+            "admin_notice_messages": {"1": {"message_id": 900, "edit_kind": "caption", "text": "old"}},
+        },
+        now=service.clock.now(),
+    )
+    db.update_message_id(sub_id, 555, service.clock.now())
+    query = FakeCallbackQuery(f"move_r18:{sub_id}:safe", FakeSentMessage(900, caption="old"))
+
+    await service.handle_callback(FakeUpdate(FakeUser(1, "admin"), callback_query=query))
+
+    edit_calls = [call for call in bot.calls if call["method"] == "edit_message_caption"]
+    assert edit_calls
+    assert edit_calls[-1]["chat_id"] == 1
+    assert edit_calls[-1]["message_id"] == 900
+    assert "发到频道：@r18" in edit_calls[-1]["caption"]
+    assert "✅ 已经通过啦喵 by @admin" in edit_calls[-1]["caption"]
+    assert not [call for call in bot.calls if call["method"] == "send_photo" and call["chat_id"] == 1]
+    assert query.edited_caption is None
 
 
 @pytest.mark.asyncio
@@ -574,7 +610,40 @@ async def test_admin_deletes_published_submission_from_forward_buttons(app_facto
     assert submission.status == "deleted"
     assert metadata["deleted_by"] == 1
     assert db.find_by_url("https://twitter.com/u/status/delete-me") is None
-    assert query.edited_caption == "original\n\n🗑️ 已经删除啦喵 by @admin"
+    assert "发到频道：@archive" in query.edited_caption
+    assert "🗑️ 已经删除啦喵 by @admin" in query.edited_caption
+
+
+@pytest.mark.asyncio
+async def test_admin_delete_edits_recorded_admin_text_notice(app_factory, sample_media):
+    service, db, bot, _ = app_factory(channel="@archive", r18_channel="@r18")
+    sub_id = db.create_submission(
+        user_id=2,
+        username="u",
+        url="https://twitter.com/u/status/delete-notice",
+        status="approved",
+        media_paths=[sample_media["jpg"]],
+        metadata={
+            "canonical_url": "https://twitter.com/u/status/delete-notice",
+            "safety_rating": "safe",
+            "channel_message_ids": [555],
+            "admin_notice_messages": {"1": {"message_id": 901, "edit_kind": "text", "text": "old"}},
+        },
+        now=service.clock.now(),
+    )
+    db.update_message_id(sub_id, 555, service.clock.now())
+    query = FakeCallbackQuery(f"delete_post:{sub_id}:safe", FakeSentMessage(901, caption="old"))
+
+    await service.handle_callback(FakeUpdate(FakeUser(1, "admin"), callback_query=query))
+
+    edit_calls = [call for call in bot.calls if call["method"] == "edit_message_text"]
+    assert edit_calls
+    assert edit_calls[-1]["chat_id"] == 1
+    assert edit_calls[-1]["message_id"] == 901
+    assert "发到频道：@archive" in edit_calls[-1]["text"]
+    assert "🗑️ 已经删除啦喵 by @admin" in edit_calls[-1]["text"]
+    assert edit_calls[-1]["reply_markup"] is None
+    assert query.edited_caption is None
 
 
 @pytest.mark.asyncio

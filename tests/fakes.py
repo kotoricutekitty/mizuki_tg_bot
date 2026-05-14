@@ -141,6 +141,14 @@ class FakeBot:
         self.calls.append({"method": "delete_message", "chat_id": chat_id, "message_id": message_id})
         return True
 
+    async def edit_message_text(self, chat_id: int | str, message_id: int, text: str, **kwargs: Any) -> bool:
+        self.calls.append({"method": "edit_message_text", "chat_id": chat_id, "message_id": message_id, "text": text, **kwargs})
+        return True
+
+    async def edit_message_caption(self, chat_id: int | str, message_id: int, caption: str, **kwargs: Any) -> bool:
+        self.calls.append({"method": "edit_message_caption", "chat_id": chat_id, "message_id": message_id, "caption": caption, **kwargs})
+        return True
+
 
 class FakeDownloader:
     def __init__(self, mapping: dict[str, tuple[list[str], dict]] | None = None):

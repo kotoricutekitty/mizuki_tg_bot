@@ -171,4 +171,5 @@ async def test_admin_can_approve_uncertain_submission_as_r18(app_factory, sample
     assert submission.status == "approved"
     published = [call for call in bot.calls if call["method"] == "send_photo" and call["chat_id"] == "@r18"]
     assert published
-    assert query.edited_caption == "review\n\n✅ 已经通过啦喵 by @admin"
+    assert "发到频道：@r18" in query.edited_caption
+    assert "✅ 已经通过啦喵 by @admin" in query.edited_caption

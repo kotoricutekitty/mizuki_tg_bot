@@ -68,6 +68,22 @@ class TelegramBotClient:
     async def delete_message(self, chat_id: int | str, message_id: int) -> Any:
         return await self.bot.delete_message(chat_id=chat_id, message_id=message_id)
 
+    async def edit_message_text(self, chat_id: int | str, message_id: int, text: str, **kwargs: Any) -> Any:
+        return await self.bot.edit_message_text(
+            chat_id=chat_id,
+            message_id=message_id,
+            text=text,
+            **convert_reply_markup(kwargs),
+        )
+
+    async def edit_message_caption(self, chat_id: int | str, message_id: int, caption: str, **kwargs: Any) -> Any:
+        return await self.bot.edit_message_caption(
+            chat_id=chat_id,
+            message_id=message_id,
+            caption=caption,
+            **convert_reply_markup(kwargs),
+        )
+
 
 def open_if_path(value: Any) -> Any:
     if isinstance(value, (str, Path)) and Path(value).exists():
