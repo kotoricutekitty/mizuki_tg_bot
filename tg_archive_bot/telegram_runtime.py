@@ -15,7 +15,7 @@ from .http_api import run_http_api
 from .safety import create_image_safety_detector
 from .service import ArchiveBot
 from .twitter_bookmarks import TwitterBookmarkMonitor, XBookmarksClient, XOAuth2TokenRefresher
-from .web_bookmarks import BookmarkMonitorGroup, PixivBookmarksClient, PoipikuBookmarksClient
+from .web_bookmarks import BookmarkMonitorGroup, DanbooruFavoritesClient, PixivBookmarksClient, PoipikuBookmarksClient
 
 
 class TelegramBotClient:
@@ -241,6 +241,23 @@ async def main() -> None:
                     config.poipiku_bookmarks_cookies
                     and config.poipiku_bookmarks_cookies.exists()
                 ),
+            )
+        )
+    if config.danbooru_username and config.danbooru_password:
+        danbooru_client = DanbooruFavoritesClient(
+            username=config.danbooru_username,
+            password=config.danbooru_password,
+            max_results=config.web_bookmarks_max_results,
+        )
+        bookmark_monitors.append(
+            TwitterBookmarkMonitor(
+                config=config,
+                db=db,
+                archive_bot=archive_bot,
+                client=danbooru_client,
+                provider="danbooru",
+                label="Danbooru",
+                configured=lambda: bool(config.danbooru_username and config.danbooru_password),
             )
         )
     if bookmark_monitors:

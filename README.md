@@ -10,7 +10,7 @@ Python-only Telegram archive bot for self-hosted channels. It runs in polling mo
 - Anime image rating with `deepghs/anime_rating` model `mobilenetv3_sce_dist`
 - Original media retrieval by forwarding a channel post or sending an already submitted link
 - Optional HTTP `POST /submit` API protected by `X-Post-Token`
-- Unified `/bookmark_watch` monitor for Twitter, Pixiv, and Poipiku bookmarks
+- Unified `/bookmark_watch` monitor for Twitter, Pixiv, Poipiku, and Danbooru bookmarks/favorites
 - Local SQLite database and local media archive
 - No Cloudflare Worker, D1, R2, Queue, or webhook dependency
 
@@ -177,7 +177,7 @@ WEB_BOOKMARKS_MAX_PAGES=4
 
 Use an account that can view the target posts. If the downloaded image is only a placeholder, refresh the cookie file and retry the submission with `/retry <id|url>`.
 
-## Danbooru Posts
+## Danbooru Posts and Favorites
 
 Danbooru single post URLs are supported through `gallery-dl`:
 
@@ -191,6 +191,8 @@ Optional login:
 DANBOORU_USERNAME=your_danbooru_username
 DANBOORU_PASSWORD=your_danbooru_api_key_or_password
 ```
+
+Danbooru favorites/likes are included in `/bookmark_watch` when both `DANBOORU_USERNAME` and `DANBOORU_PASSWORD` are configured. Use your Danbooru API key as the password when possible.
 
 Only single post URLs are supported by the bot by default. Search and pool URLs are intentionally not matched to avoid accidentally posting a large batch. Danbooru `rating=q` and `rating=e` route as R-18 when R-18 routing is enabled.
 
@@ -218,7 +220,7 @@ config - Show runtime config stored in the database
 set <key> <value> - Set runtime config
 pixiv_status - Show Pixiv download rate-limit status
 rating_threshold <low> <high> - Tune anime rating thresholds
-bookmark_watch - Start Twitter/Pixiv/Poipiku bookmark watching
+bookmark_watch - Start Twitter/Pixiv/Poipiku/Danbooru bookmark watching
 ```
 
 ## Testing

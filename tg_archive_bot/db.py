@@ -474,7 +474,7 @@ class Database:
 
 
 def bookmark_tables(provider: str) -> tuple[str, str]:
-    if provider not in {"twitter", "pixiv", "poipiku"}:
+    if provider not in {"twitter", "pixiv", "poipiku", "danbooru"}:
         raise ValueError(f"Unsupported bookmark provider: {provider}")
     return f"{provider}_bookmark_items", f"{provider}_bookmark_monitor_state"
 
@@ -663,6 +663,24 @@ CREATE TABLE IF NOT EXISTS poipiku_bookmark_monitor_state (
   value TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS danbooru_bookmark_items (
+  tweet_id TEXT PRIMARY KEY,
+  url TEXT NOT NULL,
+  status TEXT NOT NULL,
+  first_seen_at TIMESTAMP NOT NULL,
+  last_seen_at TIMESTAMP NOT NULL,
+  submitted_at TIMESTAMP,
+  removed_at TIMESTAMP,
+  submission_id INTEGER,
+  error TEXT,
+  updated_at TIMESTAMP NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS danbooru_bookmark_monitor_state (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS moderation_logs (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   submission_id INTEGER,
@@ -686,6 +704,8 @@ CREATE INDEX IF NOT EXISTS idx_pixiv_bookmark_items_status ON pixiv_bookmark_ite
 CREATE INDEX IF NOT EXISTS idx_pixiv_bookmark_items_first_seen ON pixiv_bookmark_items(first_seen_at);
 CREATE INDEX IF NOT EXISTS idx_poipiku_bookmark_items_status ON poipiku_bookmark_items(status);
 CREATE INDEX IF NOT EXISTS idx_poipiku_bookmark_items_first_seen ON poipiku_bookmark_items(first_seen_at);
+CREATE INDEX IF NOT EXISTS idx_danbooru_bookmark_items_status ON danbooru_bookmark_items(status);
+CREATE INDEX IF NOT EXISTS idx_danbooru_bookmark_items_first_seen ON danbooru_bookmark_items(first_seen_at);
 CREATE INDEX IF NOT EXISTS idx_moderation_logs_submission_id ON moderation_logs(submission_id);
 CREATE INDEX IF NOT EXISTS idx_moderation_logs_created_at ON moderation_logs(created_at);
 """

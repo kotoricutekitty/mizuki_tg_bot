@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import logging
 import re
@@ -156,8 +157,85 @@ class PoipikuBookmarksClient:
         return posts
 
 
+class DanbooruFavoritesClient:
+    FAVORITES_URL = "https://danbooru.donmai.us/favorites.json"
+
+    def __init__(self, *, username: str, password: str, max_results: int = 20):
+        self.username = username
+        self.password = password
+        self.max_results = max_results
+
+    async def fetch_bookmarks(self) -> list[BookmarkPost]:
+        return await asyncio.to_thread(self._fetch_bookmarks_until_sync, set(), 1)
+
+    async def fetch_bookmarks_until(self, stop_ids: set[str], max_pages: int = 4) -> list[BookmarkPost]:
+        return await asyncio.to_thread(self._fetch_bookmarks_until_sync, stop_ids, max_pages)
+
+    def _fetch_bookmarks_until_sync(self, stop_ids: set[str], max_pages: int) -> list[BookmarkPost]:
+        posts: list[BookmarkPost] = []
+        seen: set[str] = set()
+        for page in range(1, max(1, max_pages) + 1):
+            page_posts = self._fetch_page(page)
+            for post in page_posts:
+                if post.tweet_id in seen:
+                    continue
+                seen.add(post.tweet_id)
+                posts.append(post)
+            if not page_posts or any(post.tweet_id in stop_ids for post in page_posts):
+                break
+            if len(page_posts) < self.max_results:
+                break
+        return posts
+
+    def _fetch_page(self, page: int) -> list[BookmarkPost]:
+        query = urllib.parse.urlencode({"limit": str(self.max_results), "page": str(page)})
+        payload = read_json_basic_auth(
+            f"{self.FAVORITES_URL}?{query}",
+            username=self.username,
+            password=self.password,
+            referer="https://danbooru.donmai.us/favorites",
+        )
+        if not isinstance(payload, list):
+            raise RuntimeError("Danbooru favorites request returned unexpected payload")
+        posts: list[BookmarkPost] = []
+        for item in payload:
+            if not isinstance(item, dict):
+                continue
+            post_id = danbooru_favorite_post_id(item)
+            if not post_id:
+                continue
+            posts.append(BookmarkPost(post_id, f"https://danbooru.donmai.us/posts/{post_id}"))
+        return posts
+
+
+def danbooru_favorite_post_id(item: dict) -> str:
+    post_id = item.get("post_id")
+    if not post_id and isinstance(item.get("post"), dict):
+        post_id = item["post"].get("id")
+    if not post_id and "file_url" in item:
+        post_id = item.get("id")
+    return str(post_id or "").strip()
+
+
 def read_json(url: str, cookies_path: Path, *, referer: str) -> dict:
     return json.loads(read_text(url, cookies_path, referer=referer))
+
+
+def read_json_basic_auth(url: str, *, username: str, password: str, referer: str) -> object:
+    if not username or not password:
+        raise RuntimeError("Missing Danbooru username or API key")
+    credentials = base64.b64encode(f"{username}:{password}".encode("utf-8")).decode("ascii")
+    request = urllib.request.Request(
+        url,
+        headers={
+            "Accept": "application/json",
+            "Authorization": f"Basic {credentials}",
+            "Referer": referer,
+            "User-Agent": "Mozilla/5.0 tg-archive-bot/0.1",
+        },
+    )
+    with urllib.request.urlopen(request, timeout=30) as response:
+        return json.loads(response.read().decode("utf-8", errors="replace"))
 
 
 def read_text(url: str, cookies_path: Path, *, referer: str) -> str:

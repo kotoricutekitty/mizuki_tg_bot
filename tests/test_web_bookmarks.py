@@ -6,7 +6,12 @@ import pytest
 
 from tests.fakes import FakeBookmarkClient, FakeClock
 from tg_archive_bot.twitter_bookmarks import BookmarkPost, TwitterBookmarkMonitor
-from tg_archive_bot.web_bookmarks import BookmarkMonitorGroup, PixivBookmarksClient, PoipikuBookmarksClient
+from tg_archive_bot.web_bookmarks import (
+    BookmarkMonitorGroup,
+    DanbooruFavoritesClient,
+    PixivBookmarksClient,
+    PoipikuBookmarksClient,
+)
 import tg_archive_bot.web_bookmarks as web_bookmarks
 
 
@@ -55,6 +60,33 @@ async def test_poipiku_bookmark_client_dedupes_thumbnail_links(monkeypatch, tmp_
 
 
 @pytest.mark.asyncio
+async def test_danbooru_favorites_client_reads_liked_posts(monkeypatch):
+    def fake_json_basic_auth(url: str, *, username: str, password: str, referer: str):
+        assert "favorites.json" in url
+        assert "limit=20" in url
+        assert username == "user@example.com"
+        assert password == "api-key"
+        assert referer == "https://danbooru.donmai.us/favorites"
+        return [
+            {"post_id": 123},
+            {"post": {"id": 124}},
+            {"id": 125, "file_url": "https://cdn.example/125.jpg"},
+            {"id": "favorite-id"},
+        ]
+
+    monkeypatch.setattr(web_bookmarks, "read_json_basic_auth", fake_json_basic_auth)
+    client = DanbooruFavoritesClient(username="user@example.com", password="api-key", max_results=20)
+
+    posts = await client.fetch_bookmarks_until(set(), max_pages=1)
+
+    assert posts == [
+        BookmarkPost("123", "https://danbooru.donmai.us/posts/123"),
+        BookmarkPost("124", "https://danbooru.donmai.us/posts/124"),
+        BookmarkPost("125", "https://danbooru.donmai.us/posts/125"),
+    ]
+
+
+@pytest.mark.asyncio
 async def test_poipiku_monitor_uses_separate_state_and_submits_existing_bookmarks(app_factory, sample_media):
     url = "https://poipiku.com/1978861/11424450.html"
     service, db, _, downloader = app_factory({url: ([sample_media["jpg"]], {"canonical_url": url})})
@@ -79,6 +111,33 @@ async def test_poipiku_monitor_uses_separate_state_and_submits_existing_bookmark
     assert db.bookmark_item_count(provider="poipiku") == 1
     assert db.bookmark_item_count(provider="twitter") == 0
     assert db.get_submission(1).username == "poipiku_bookmark_monitor"
+
+
+@pytest.mark.asyncio
+async def test_danbooru_monitor_uses_separate_state_and_submits_existing_favorites(app_factory, sample_media):
+    url = "https://danbooru.donmai.us/posts/123"
+    service, db, _, downloader = app_factory({url: ([sample_media["jpg"]], {"canonical_url": url})})
+    clock = FakeClock()
+    client = FakeBookmarkClient([[BookmarkPost("123", url)], [BookmarkPost("123", url)]])
+    monitor = TwitterBookmarkMonitor(
+        config=service.config,
+        db=db,
+        archive_bot=service,
+        client=client,
+        clock=clock,
+        provider="danbooru",
+        label="Danbooru",
+        configured=lambda: True,
+    )
+
+    await monitor.poll_once()
+    clock.advance(10)
+    await monitor.poll_once()
+
+    assert downloader.calls == [url]
+    assert db.bookmark_item_count(provider="danbooru") == 1
+    assert db.bookmark_item_count(provider="twitter") == 0
+    assert db.get_submission(1).username == "danbooru_bookmark_monitor"
 
 
 def test_bookmark_monitor_group_activates_all_configured_monitors():
