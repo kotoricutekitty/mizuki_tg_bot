@@ -81,3 +81,33 @@ def test_danbooru_metadata_mapping(tmp_path: Path):
     assert metadata["rating"] == "e"
     assert metadata["tag_string_character"] == "character_name"
     assert metadata["canonical_url"] == "https://danbooru.donmai.us/posts/1234567"
+
+
+def test_danbooru_metadata_fetches_artist_commentary(tmp_path: Path, monkeypatch):
+    metadata_file = tmp_path / "post_metadata.json"
+    metadata_file.write_text(
+        '{"id": 1234567, "tag_string_artist": "artist_name", "rating": "s"}',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        downloader,
+        "fetch_danbooru_commentary",
+        lambda post_id, username, password: {
+            "original_title": "タイトル",
+            "original_description": "一行目\n二行目",
+            "translated_title": "",
+            "translated_description": "",
+        },
+    )
+    metadata = {}
+    gallery_downloader = downloader.GalleryDownloader(tmp_path, danbooru_username="user", danbooru_password="key")
+
+    gallery_downloader._merge_metadata(metadata_file, "https://danbooru.donmai.us/posts/1234567", metadata)
+
+    assert metadata["title"] == "タイトル"
+    assert metadata["text"] == "タイトル 一行目\n二行目"
+    assert metadata["danbooru_commentary"]["original_description"] == "一行目\n二行目"
+
+
+def test_danbooru_caption_text_drops_description_over_two_lines():
+    assert downloader.danbooru_caption_text("タイトル", "1\n2\n3") == "タイトル"

@@ -283,6 +283,7 @@ async def main() -> None:
             archive_bot.bookmark_monitor.activate()
             await archive_bot.notify_bookmark_watch_started()
             await archive_bot.poll_bookmark_watch_once()
+    await archive_bot.repair_danbooru_captions_once()
     logging.info("Bot started successfully!")
 
     try:

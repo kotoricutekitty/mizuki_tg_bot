@@ -180,11 +180,15 @@ class GalleryDownloader:
                     metadata[key] = data.get(key)
         elif "danbooru.donmai.us" in url:
             metadata["author_name"] = danbooru_artist_name(data)
-            metadata["title"] = ""
-            metadata["text"] = ""
             post_id = data.get("id") or data.get("post_id")
             if post_id:
                 metadata["canonical_url"] = f"https://danbooru.donmai.us/posts/{post_id}"
+                metadata["post_id"] = str(post_id)
+                commentary = self.fetch_danbooru_commentary(str(post_id))
+                if commentary:
+                    apply_danbooru_commentary(metadata, commentary)
+            metadata.setdefault("title", "")
+            metadata.setdefault("text", "")
             for key in (
                 "rating",
                 "tag_string",
@@ -203,6 +207,15 @@ class GalleryDownloader:
                 if key in data:
                     metadata[key] = data.get(key)
         metadata.setdefault("canonical_url", url)
+
+    def fetch_danbooru_commentary(self, post_id: str) -> dict:
+        if not self.danbooru_username or not self.danbooru_password:
+            return {}
+        try:
+            return fetch_danbooru_commentary(post_id, self.danbooru_username, self.danbooru_password)
+        except Exception as exc:
+            logging.warning("Danbooru commentary fetch failed for post %s: %s", post_id, exc)
+            return {}
 
     async def _convert_ugoira(self, file_path: Path) -> Path | None:
         metadata_file = Path(str(file_path) + ".json")
@@ -281,6 +294,52 @@ def danbooru_artist_name(data: dict) -> str:
         if isinstance(artists, list) and artists:
             return str(artists[0]).replace("_", " ")
     return ""
+
+
+def fetch_danbooru_commentary(post_id: str, username: str, password: str) -> dict:
+    import base64
+
+    query = urllib.parse.urlencode({"search[post_id]": str(post_id)})
+    url = f"https://danbooru.donmai.us/artist_commentaries.json?{query}"
+    credentials = base64.b64encode(f"{username}:{password}".encode("utf-8")).decode("ascii")
+    request = urllib.request.Request(
+        url,
+        headers={
+            "Accept": "application/json",
+            "Authorization": f"Basic {credentials}",
+            "User-Agent": f"mizuki-tg-bot/0.1 ({username})",
+        },
+    )
+    with urllib.request.urlopen(request, timeout=30) as response:
+        payload = json.loads(response.read().decode("utf-8", errors="replace"))
+    if isinstance(payload, list) and payload and isinstance(payload[0], dict):
+        return payload[0]
+    return {}
+
+
+def apply_danbooru_commentary(metadata: dict, commentary: dict) -> None:
+    title = str(commentary.get("original_title") or "").strip()
+    description = str(commentary.get("original_description") or "").strip()
+    metadata["title"] = title
+    metadata["text"] = danbooru_caption_text(title, description)
+    metadata["danbooru_commentary"] = {
+        "original_title": title,
+        "original_description": description,
+        "translated_title": commentary.get("translated_title") or "",
+        "translated_description": commentary.get("translated_description") or "",
+    }
+
+
+def danbooru_caption_text(title: str, description: str) -> str:
+    if description and len(danbooru_description_lines(description)) > 2:
+        description = ""
+    parts = [part.strip() for part in (title, description) if part and part.strip()]
+    return " ".join(parts)
+
+
+def danbooru_description_lines(description: str) -> list[str]:
+    normalized = re.sub(r"<br\s*/?>", "\n", description, flags=re.IGNORECASE)
+    return [line.strip() for line in normalized.replace("\r", "\n").split("\n") if line.strip()]
 
 
 def download_poipiku_append_files(

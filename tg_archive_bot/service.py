@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import json
@@ -12,8 +13,8 @@ from typing import Any, Protocol
 
 from . import messages
 from .config import BotConfig
-from .db import Database, Submission
-from .downloader import Downloader
+from .db import Database, Submission, row_to_submission
+from .downloader import Downloader, apply_danbooru_commentary, fetch_danbooru_commentary
 from .media import MAX_PHOTO_SIZE, MAX_PUBLISH_PHOTO_SIZE, MAX_VIDEO_SIZE, compress_image, media_kind
 from .safety import ImageSafetyDetector, SafetyDecision, classify_safety
 from .url_utils import extract_urls_from_text, normalize_url
@@ -626,11 +627,12 @@ class ArchiveBot:
             return None
         self.db.update_status(submission_id, "approved", reviewer_id, self.clock.now())
         target_channel = self.publish_channel_for_submission(submission)
+        metadata = submission_metadata(submission)
         caption = messages.publish_caption(
             submission.url,
-            author_name=submission.author_name,
-            text=submission.text,
-            canonical_url=submission.canonical_url,
+            author_name=metadata.get("author_name") or submission.author_name,
+            text=metadata.get("text") or submission.text,
+            canonical_url=metadata.get("canonical_url") or submission.canonical_url,
         )
         channel_message_id: int | None = None
         channel_message_ids: list[int] = []
@@ -678,6 +680,94 @@ class ArchiveBot:
                 await self.notify_moderation_submission(published_submission, target_channel)
         logging.info("发布成功: 投稿 #%s 已发送到频道 %s", submission_id, target_channel)
         return channel_message_id
+
+    async def repair_danbooru_captions_once(self) -> None:
+        username = str(getattr(self.downloader, "danbooru_username", "") or "")
+        password = str(getattr(self.downloader, "danbooru_password", "") or "")
+        if not username or not password:
+            return
+        repaired = 0
+        for submission in self.danbooru_submissions_needing_caption_repair():
+            try:
+                post_id = danbooru_post_id(submission)
+                if not post_id:
+                    continue
+                metadata = submission_metadata(submission)
+                commentary = await asyncio.to_thread(fetch_danbooru_commentary, post_id, username, password)
+                if not commentary:
+                    metadata["danbooru_caption_repair_error"] = "no commentary"
+                    self.db.update_metadata(submission.id, metadata, self.clock.now())
+                    continue
+                apply_danbooru_commentary(metadata, commentary)
+                metadata["danbooru_caption_repaired_at"] = self.clock.now().isoformat()
+                metadata.pop("danbooru_caption_repair_error", None)
+                self.db.update_metadata(submission.id, metadata, self.clock.now())
+                refreshed = self.db.get_submission(submission.id)
+                if not refreshed:
+                    continue
+                await self.edit_published_caption(refreshed)
+                await self.update_admin_notices(
+                    submission.id,
+                    self.admin_notice_status_text(refreshed, "approved", "mizuki"),
+                    self.moderation_reply_markup_for_submission(refreshed),
+                )
+                repaired += 1
+            except Exception as exc:
+                logging.exception("Danbooru caption repair failed for submission #%s", submission.id)
+                metadata = submission_metadata(submission)
+                metadata["danbooru_caption_repair_error"] = str(exc)
+                self.db.update_metadata(submission.id, metadata, self.clock.now())
+                await self.notify_admin_error(
+                    "Danbooru caption repair failed",
+                    exc,
+                    detail=f"submission_id={submission.id}\nurl={submission.url}",
+                    throttle_key=f"danbooru_caption_repair:{submission.id}",
+                )
+        if repaired:
+            logging.info("Danbooru caption repair updated %s submissions", repaired)
+
+    def danbooru_submissions_needing_caption_repair(self) -> list[Submission]:
+        with self.db.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT *
+                FROM submissions
+                WHERE status = 'approved'
+                  AND (
+                    provider = 'danbooru'
+                    OR url LIKE '%danbooru.donmai.us/posts/%'
+                    OR canonical_url LIKE '%danbooru.donmai.us/posts/%'
+                  )
+                ORDER BY id
+                """
+            ).fetchall()
+        submissions = []
+        for row in rows:
+            submission = row_to_submission(row)
+            metadata = submission_metadata(submission)
+            if metadata.get("danbooru_caption_repaired_at"):
+                continue
+            if metadata.get("danbooru_commentary") and metadata.get("text"):
+                continue
+            submissions.append(submission)
+        return submissions
+
+    async def edit_published_caption(self, submission: Submission) -> None:
+        channel = str(submission_metadata(submission).get("channel_id") or self.publish_channel_for_submission(submission))
+        metadata = submission_metadata(submission)
+        caption = messages.publish_caption(
+            submission.url,
+            author_name=metadata.get("author_name") or submission.author_name,
+            text=metadata.get("text") or submission.text,
+            canonical_url=metadata.get("canonical_url") or submission.canonical_url,
+        )
+        for message_id in caption_message_ids(submission):
+            await self.bot.edit_message_caption(
+                chat_id=channel,
+                message_id=message_id,
+                caption=caption,
+                parse_mode="HTML",
+            )
 
     async def notify_moderation_submission(self, submission: Submission, target_channel: int | str) -> bool:
         if not self.config.r18_routing_enabled:
@@ -1489,6 +1579,27 @@ def published_message_ids(submission: Submission) -> list[int]:
     if 1 < len(submission.media_paths) <= 10:
         return [int(submission.message_id) + index for index in range(len(submission.media_paths))]
     return [int(submission.message_id)]
+
+
+def caption_message_ids(submission: Submission) -> list[int]:
+    message_ids = published_message_ids(submission)
+    if not message_ids:
+        return []
+    media_count = max(1, len(published_media_paths(submission)))
+    if media_count <= PUBLISH_MEDIA_GROUP_SIZE:
+        return [message_ids[0]]
+    return [message_ids[index] for index in range(0, min(len(message_ids), media_count), PUBLISH_MEDIA_GROUP_SIZE)]
+
+
+def danbooru_post_id(submission: Submission) -> str | None:
+    metadata = submission_metadata(submission)
+    for value in (metadata.get("post_id"), submission.canonical_url, submission.url):
+        if not value:
+            continue
+        match = re.search(r"(?:danbooru\.donmai\.us/posts/)?(\d+)", str(value))
+        if match:
+            return match.group(1)
+    return None
 
 
 def parse_message_ids(values: list[Any]) -> list[int]:

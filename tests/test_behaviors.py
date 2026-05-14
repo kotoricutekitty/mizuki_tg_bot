@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from tg_archive_bot import messages
+import tg_archive_bot.service as service_module
 from tests.fakes import (
     FakeCallbackQuery,
     FakeChat,
@@ -900,6 +901,56 @@ async def test_publish_video_and_document_branches(app_factory, sample_media, tm
     doc_id = db.create_submission(user_id=1, username="admin", url="https://twitter.com/u/status/12", status="approved", media_paths=[str(doc)], metadata={}, now=service.clock.now())
     await service.publish_submission(doc_id, 1)
     assert bot.calls[-1]["method"] == "send_document"
+
+
+@pytest.mark.asyncio
+async def test_danbooru_caption_repair_updates_metadata_and_channel_caption(app_factory, sample_media, monkeypatch):
+    service, db, bot, downloader = app_factory(channel="@archive")
+    downloader.danbooru_username = "user"
+    downloader.danbooru_password = "key"
+    sub_id = db.create_submission(
+        user_id=1,
+        username="danbooru_bookmark_monitor",
+        url="https://danbooru.donmai.us/posts/1234567",
+        status="approved",
+        media_paths=[sample_media["jpg"]],
+        metadata={
+            "canonical_url": "https://danbooru.donmai.us/posts/1234567",
+            "author_name": "artist name",
+            "channel_id": "@archive",
+            "channel_message_ids": [321],
+        },
+        now=service.clock.now(),
+    )
+    db.update_message_id(sub_id, 321, service.clock.now())
+    monkeypatch.setattr(
+        service_module,
+        "fetch_danbooru_commentary",
+        lambda post_id, username, password: {
+            "original_title": "タイトル",
+            "original_description": "本文",
+            "translated_title": "",
+            "translated_description": "",
+        },
+    )
+
+    await service.repair_danbooru_captions_once()
+
+    submission = db.get_submission(sub_id)
+    metadata = json.loads(submission.metadata_json)
+    assert metadata["title"] == "タイトル"
+    assert metadata["text"] == "タイトル 本文"
+    assert metadata["danbooru_caption_repaired_at"]
+    edit_calls = [call for call in bot.calls if call["method"] == "edit_message_caption"]
+    assert edit_calls == [
+        {
+            "method": "edit_message_caption",
+            "chat_id": "@archive",
+            "message_id": 321,
+            "caption": "<b>artist name</b>: 「タイトル 本文」\nhttps://danbooru.donmai.us/posts/1234567",
+            "parse_mode": "HTML",
+        }
+    ]
 
 
 def test_publish_caption_without_author():
