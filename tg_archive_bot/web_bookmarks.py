@@ -160,6 +160,7 @@ class PoipikuBookmarksClient:
 
 class DanbooruFavoritesClient:
     FAVORITES_URL = "https://danbooru.donmai.us/favorites.json"
+    POSTS_URL = "https://danbooru.donmai.us/posts.json"
 
     def __init__(self, *, username: str, password: str, max_results: int = 20):
         self.username = username
@@ -189,15 +190,15 @@ class DanbooruFavoritesClient:
         return posts
 
     def _fetch_page(self, page: int) -> list[BookmarkPost]:
-        query = urllib.parse.urlencode({"limit": str(self.max_results), "page": str(page)})
+        query = urllib.parse.urlencode({"limit": str(self.max_results), "page": str(page), "tags": f"ordfav:{self.username}"})
         payload = read_json_basic_auth(
-            f"{self.FAVORITES_URL}?{query}",
+            f"{self.POSTS_URL}?{query}",
             username=self.username,
             password=self.password,
-            referer="https://danbooru.donmai.us/favorites",
+            referer="https://danbooru.donmai.us/posts?tags=" + urllib.parse.quote(f"ordfav:{self.username}"),
         )
         if not isinstance(payload, list):
-            raise RuntimeError("Danbooru favorites request returned unexpected payload")
+            raise RuntimeError("Danbooru favorites post search returned unexpected payload")
         posts: list[BookmarkPost] = []
         for item in payload:
             if not isinstance(item, dict):

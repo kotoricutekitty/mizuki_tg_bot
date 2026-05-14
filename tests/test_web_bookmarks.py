@@ -63,11 +63,12 @@ async def test_poipiku_bookmark_client_dedupes_thumbnail_links(monkeypatch, tmp_
 @pytest.mark.asyncio
 async def test_danbooru_favorites_client_reads_liked_posts(monkeypatch):
     def fake_json_basic_auth(url: str, *, username: str, password: str, referer: str):
-        assert "favorites.json" in url
+        assert "posts.json" in url
         assert "limit=20" in url
+        assert "ordfav%3Auser%40example.com" in url
         assert username == "user@example.com"
         assert password == "api-key"
-        assert referer == "https://danbooru.donmai.us/favorites"
+        assert referer == "https://danbooru.donmai.us/posts?tags=ordfav%3Auser%40example.com"
         return [
             {"post_id": 123},
             {"post": {"id": 124}},
