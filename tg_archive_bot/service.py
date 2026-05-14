@@ -257,7 +257,9 @@ class ArchiveBot:
             elif result == "pending":
                 await update.message.reply_text(messages.select_pending(normalized_url, indexes))
             else:
-                await update.message.reply_text(messages.select_published(normalized_url, indexes))
+                await update.message.reply_text(
+                    messages.select_published(normalized_url, indexes, self.published_channel_for_submission_id(existing.id))
+                )
             return
         if "pixiv.net" in normalized_url:
             count, _, _ = self.db.count_pixiv_downloads(self.config.pixiv_limit_hours)
@@ -286,7 +288,9 @@ class ArchiveBot:
             elif result == "pending":
                 await update.message.reply_text(messages.select_pending(normalized_url, indexes))
             else:
-                await update.message.reply_text(messages.select_published(normalized_url, indexes))
+                await update.message.reply_text(
+                    messages.select_published(normalized_url, indexes, self.published_channel_for_submission_id(existing.id))
+                )
             return
         safety_decision = await self.classify_downloaded_content(normalized_url, selected_media, metadata)
         status = "pending" if safety_decision.rating == "uncertain" else "approved"
@@ -304,7 +308,9 @@ class ArchiveBot:
             await update.message.reply_text(messages.select_pending(normalized_url, indexes))
             return
         await self.publish_submission(submission_id, update.effective_user.id)
-        await update.message.reply_text(messages.select_published(normalized_url, indexes))
+        await update.message.reply_text(
+            messages.select_published(normalized_url, indexes, self.published_channel_for_submission_id(submission_id))
+        )
 
     async def select_submission_media(self, submission: Submission, indexes: list[int], admin_id: int) -> str:
         selected_media = select_media_files(submission.media_paths, indexes)
@@ -356,7 +362,9 @@ class ArchiveBot:
         elif result == "pending":
             await update.message.reply_text(messages.retry_pending(submission.id))
         else:
-            await update.message.reply_text(messages.retry_published(submission.id))
+            await update.message.reply_text(
+                messages.retry_published(submission.id, self.published_channel_for_submission_id(submission.id))
+            )
 
     def activate_bookmark_watch(self) -> SubmitResult:
         if not self.bookmark_monitor or not self.bookmark_monitor.is_configured():
@@ -490,7 +498,11 @@ class ArchiveBot:
                 if is_admin and submission_id in self._moderation_notified_submission_ids:
                     await self.delete_status_message(user_id, status_message)
                 else:
-                    await update_status_message(status_message, messages.admin_published(url), update.message)
+                    await update_status_message(
+                        status_message,
+                        messages.admin_published(url, self.published_channel_for_submission_id(submission_id)),
+                        update.message,
+                    )
             else:
                 review_message = await self.send_to_review(submission_id, url, username, media_files, metadata)
                 if review_message:
@@ -657,7 +669,7 @@ class ArchiveBot:
         if not self.config.r18_routing_enabled:
             return False
         metadata = submission_metadata(submission)
-        caption = messages.moderation_caption(submission.id, submission.url, metadata)
+        caption = messages.moderation_caption(submission.id, submission.url, metadata, target_channel)
         reply_markup = moderation_reply_markup(
             submission.id,
             "r18" if str(target_channel) == self.config.r18_channel_id else "safe",
@@ -874,7 +886,8 @@ class ArchiveBot:
         submission = self.db.get_submission(submission_id)
         for admin in self.config.admin_ids:
             try:
-                text = messages.api_notify(submission_id, normalized_url, metadata)
+                channel = self.published_channel_for_submission_id(submission_id)
+                text = messages.api_notify(submission_id, normalized_url, metadata, channel)
                 if submission:
                     await self.send_submission_message(admin, submission, text)
                 else:
@@ -1083,6 +1096,16 @@ class ArchiveBot:
         if metadata.get("safety_rating") == "r18":
             return self.config.r18_channel_id
         return self.config.publish_channel_id
+
+    def published_channel_for_submission_id(self, submission_id: int) -> str | None:
+        submission = self.db.get_submission(submission_id)
+        if not submission:
+            return None
+        metadata = submission_metadata(submission)
+        channel = metadata.get("channel_id")
+        if channel:
+            return str(channel)
+        return self.publish_channel_for_submission(submission)
 
 
 def collect_message_text(message: Any) -> str:

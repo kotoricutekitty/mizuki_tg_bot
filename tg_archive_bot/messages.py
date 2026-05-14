@@ -144,9 +144,16 @@ def select_invalid_indexes(total: int) -> str:
     return f"呜喵...选择的图片序号不对喵，可用范围是 1-{total}"
 
 
-def select_published(url: str, indexes: list[int]) -> str:
+def channel_line(channel: int | str | None) -> str:
+    return f"发到频道：{channel}" if channel else ""
+
+
+def select_published(url: str, indexes: list[int], channel: int | str | None = None) -> str:
     index_text = ",".join(str(index) for index in indexes)
-    return f"投稿已发布喵：{url}\n已选择图片：{index_text}"
+    text = f"投稿已发布喵：{url}\n已选择图片：{index_text}"
+    if channel:
+        text += f"\n{channel_line(channel)}"
+    return text
 
 
 def select_pending(url: str, indexes: list[int]) -> str:
@@ -162,8 +169,11 @@ def retry_pending(submission_id: int) -> str:
     return f"投稿 #{submission_id} 已重新下载，进入审核喵。"
 
 
-def retry_published(submission_id: int) -> str:
-    return f"投稿 #{submission_id} 已重新下载并发布喵。"
+def retry_published(submission_id: int, channel: int | str | None = None) -> str:
+    text = f"投稿 #{submission_id} 已重新下载并发布喵。"
+    if channel:
+        text += f"\n{channel_line(channel)}"
+    return text
 
 
 def delete_success(submission_id: int) -> str:
@@ -206,8 +216,11 @@ def duplicate_insert_failed() -> str:
     return "😿 投稿失败了喵，这个链接已经存在哦～"
 
 
-def admin_published(url: str) -> str:
-    return f"太棒啦！已经成功发布到频道啦喵🥳：{url}"
+def admin_published(url: str, channel: int | str | None = None) -> str:
+    text = f"太棒啦！已经成功发布到频道啦喵🥳：{url}"
+    if channel:
+        text += f"\n{channel_line(channel)}"
+    return text
 
 
 def submitted_for_review(url: str) -> str:
@@ -311,10 +324,12 @@ def submitter_rejected(url: str) -> str:
     return f"😿 很遗憾喵...你的投稿被拒绝了：{url}"
 
 
-def api_notify(submission_id: int, url: str, metadata: dict) -> str:
+def api_notify(submission_id: int, url: str, metadata: dict, channel: int | str | None = None) -> str:
     notify_text = "📥 收到API投稿啦喵！\n\n"
     notify_text += f"投稿ID: #{submission_id}\n"
     notify_text += f"链接: {url}\n"
+    if channel:
+        notify_text += f"{channel_line(channel)}\n"
     if metadata.get("author_name"):
         notify_text += f"作者: {metadata.get('author_name')}\n"
     if metadata.get("title"):
@@ -323,12 +338,14 @@ def api_notify(submission_id: int, url: str, metadata: dict) -> str:
     return notify_text
 
 
-def moderation_caption(submission_id: int, url: str, metadata: dict) -> str:
+def moderation_caption(submission_id: int, url: str, metadata: dict, channel: int | str | None = None) -> str:
     score = metadata.get("safety_score")
     score_text = f"{score:.2f}" if isinstance(score, (int, float)) else "n/a"
     class_text = metadata.get("safety_class") or "n/a"
     text = f"投稿 #{submission_id}\n"
     text += f"色图分数: {score_text}, {class_text}\n"
+    if channel:
+        text += f"{channel_line(channel)}\n"
     text += f"{url}"
     return text
 

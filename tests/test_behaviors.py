@@ -53,7 +53,7 @@ async def test_admin_submit_auto_publish(app_factory, sample_media):
     assert submission.message_id is not None
     assert len(message.replies) == 1
     assert message.replies[0]["text"] == messages.admin_submission_received("https://twitter.com/user/status/123")
-    assert message.sent_messages[0].edited_text == messages.admin_published("https://twitter.com/user/status/123")
+    assert message.sent_messages[0].edited_text == messages.admin_published("https://twitter.com/user/status/123", "@archive")
     assert bot.calls[0]["method"] == "send_photo"
     assert bot.calls[0]["chat_id"] == "@archive"
     assert bot.calls[0]["caption"] == "<b>artist</b>: 「hello」\nhttps://x.com/user/status/123"
@@ -220,7 +220,7 @@ async def test_admin_find_delete_retry_and_stats_commands(app_factory, sample_me
         type("Ctx", (), {"args": [str(sub_id)]})(),
     )
     assert retry.replies[0]["text"] == messages.retry_started(sub_id, old_url)
-    assert retry.replies[-1]["text"] == messages.retry_published(sub_id)
+    assert retry.replies[-1]["text"] == messages.retry_published(sub_id, "@archive")
     assert downloader.calls == [old_url]
     assert db.get_submission(sub_id).status == "approved"
     assert db.get_submission(sub_id).media_paths == [sample_media["png"]]
@@ -601,7 +601,7 @@ async def test_select_new_pixiv_keeps_all_media_but_publishes_selected_indexes(a
     assert metadata["original_media_count"] == 4
     assert bot.calls[0]["method"] == "send_media_group"
     assert [item["media"] for item in bot.calls[0]["media"]] == [media[0], media[2]]
-    assert message.replies[-1]["text"] == messages.select_published(url, [1, 3])
+    assert message.replies[-1]["text"] == messages.select_published(url, [1, 3], "@archive")
     assert db.find_by_url(url).id == 1
 
 
@@ -642,7 +642,7 @@ async def test_select_existing_submission_replaces_split_channel_messages(app_fa
     assert submission.media_paths == media
     assert metadata["selected_media_indexes"] == [2, 4, 6, 8, 10, 12]
     assert metadata["channel_message_ids"] == list(range(101, 107))
-    assert message.replies[-1]["text"] == messages.select_published(url, [2, 4, 6, 8, 10, 12])
+    assert message.replies[-1]["text"] == messages.select_published(url, [2, 4, 6, 8, 10, 12], "@archive")
 
 
 @pytest.mark.asyncio
@@ -849,7 +849,9 @@ async def test_http_api_submit_without_tg(app_factory, sample_media):
     assert result.status == 200
     assert result.body["status"] == "success"
     assert db.get_submission(result.body["submission_id"]).status == "approved"
-    assert any(call["method"] == "send_photo" and call["chat_id"] == 1 for call in bot.calls)
+    admin_messages = [call for call in bot.calls if call["method"] == "send_photo" and call["chat_id"] == 1]
+    assert admin_messages
+    assert "发到频道：@archive" in admin_messages[0]["caption"]
 
 
 @pytest.mark.asyncio
