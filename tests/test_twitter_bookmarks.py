@@ -139,7 +139,7 @@ async def test_bookmark_stable_after_grace_submits_as_admin(app_factory, sample_
 async def test_bookmark_duplicate_is_marked_without_resubmitting(app_factory, sample_media):
     url = "https://twitter.com/i/status/4"
     service, db, bot, downloader = app_factory({url: ([sample_media["jpg"]], {"canonical_url": url})})
-    db.create_submission(
+    existing_id = db.create_submission(
         user_id=1,
         username="admin",
         url=url,
@@ -148,6 +148,7 @@ async def test_bookmark_duplicate_is_marked_without_resubmitting(app_factory, sa
         metadata={},
         now=service.clock.now(),
     )
+    db.update_message_id(existing_id, 321, service.clock.now())
     clock = FakeClock()
     client = FakeBookmarkClient([
         [],
@@ -569,3 +570,50 @@ async def test_bookmark_submit_timeout_stays_pending_for_retry(app_factory):
     assert db.bookmark_item_count(provider="pixiv") == 1
     error_calls = [call for call in bot.calls if call["method"] == "send_message" and messages.ADMIN_ERROR_PREFIX in call["text"]]
     assert len(error_calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_bookmark_submit_retry_after_waits_without_admin_error(app_factory, monkeypatch):
+    service, db, bot, _ = app_factory()
+    clock = FakeClock()
+    url = "https://www.pixiv.net/artworks/130899328"
+    client = FakeBookmarkClient([[BookmarkPost("130899328", url)]])
+    monitor = TwitterBookmarkMonitor(
+        config=with_bookmark_config(service.config),
+        db=db,
+        archive_bot=service,
+        client=client,
+        clock=clock,
+        provider="pixiv",
+        label="Pixiv",
+        configured=lambda: True,
+    )
+    monitor.activate()
+
+    RetryAfter = type("RetryAfter", (Exception,), {"__module__": "telegram.error"})
+    exc = RetryAfter("Flood control exceeded")
+    exc.retry_after = 11
+
+    async def retry_after_submit(url, username="bookmark_monitor"):
+        raise exc
+
+    sleeps = []
+
+    async def fake_sleep(seconds):
+        sleeps.append(seconds)
+
+    service.submit_url_as_admin = retry_after_submit
+    monkeypatch.setattr("tg_archive_bot.twitter_bookmarks.asyncio.sleep", fake_sleep)
+
+    await monitor.poll_once()
+    clock.advance(10)
+    await monitor.poll_once()
+
+    item = db.pending_bookmark_items(provider="pixiv")[0]
+    assert item.tweet_id == "130899328"
+    assert item.error == "Flood control exceeded"
+    assert sleeps == [12]
+    assert monitor.active is True
+    assert monitor.last_activity_at == clock.now()
+    error_calls = [call for call in bot.calls if call["method"] == "send_message" and messages.ADMIN_ERROR_PREFIX in call["text"]]
+    assert error_calls == []

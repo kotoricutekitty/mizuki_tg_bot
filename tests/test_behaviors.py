@@ -986,7 +986,8 @@ async def test_http_api_error_branches_without_tg(app_factory, sample_media):
     assert missing_url.status == 400
     assert missing_url.body == {"status": "error", "message": "缺少url参数"}
 
-    db.create_submission(user_id=1, username="admin", url=url, status="approved", media_paths=[sample_media["jpg"]], metadata={}, now=service.clock.now())
+    duplicate_id = db.create_submission(user_id=1, username="admin", url=url, status="approved", media_paths=[sample_media["jpg"]], metadata={}, now=service.clock.now())
+    db.update_message_id(duplicate_id, 321, service.clock.now())
     duplicate = await service.api_submit(url, "api-token", "127.0.0.1")
     assert duplicate.status == 409
     assert duplicate.body["status"] == "already_exists"
@@ -1003,7 +1004,7 @@ async def test_http_api_rechecks_canonical_url_before_publish(app_factory, sampl
     service, db, bot, downloader = app_factory({
         incoming_url: ([sample_media["jpg"]], {"canonical_url": existing_url}),
     })
-    db.create_submission(
+    existing_id = db.create_submission(
         user_id=1,
         username="admin",
         url=existing_url,
@@ -1012,6 +1013,7 @@ async def test_http_api_rechecks_canonical_url_before_publish(app_factory, sampl
         metadata={"canonical_url": existing_url},
         now=service.clock.now(),
     )
+    db.update_message_id(existing_id, 321, service.clock.now())
 
     duplicate = await service.api_submit(incoming_url, "api-token", "127.0.0.1")
 
@@ -1020,6 +1022,30 @@ async def test_http_api_rechecks_canonical_url_before_publish(app_factory, sampl
     assert duplicate.body["submission_id"] == 1
     assert downloader.calls == [incoming_url]
     assert bot.calls == []
+
+
+@pytest.mark.asyncio
+async def test_http_api_republishes_existing_approved_submission_without_channel_message(app_factory, sample_media):
+    url = "https://twitter.com/u/status/40"
+    service, db, bot, downloader = app_factory({url: ([sample_media["jpg"]], {"canonical_url": url})})
+    existing_id = db.create_submission(
+        user_id=1,
+        username="api_submit",
+        url=url,
+        status="approved",
+        media_paths=[sample_media["jpg"]],
+        metadata={"canonical_url": url},
+        now=service.clock.now(),
+    )
+
+    result = await service.api_submit(url, "api-token", "127.0.0.1")
+
+    assert result.status == 200
+    assert result.body["status"] == "success"
+    assert result.body["submission_id"] == existing_id
+    assert db.get_submission(existing_id).message_id is not None
+    assert downloader.calls == []
+    assert [call["method"] for call in bot.calls].count("send_photo") == 2
 
 
 @pytest.mark.asyncio
@@ -1056,7 +1082,7 @@ def test_find_by_url_matches_canonical_url(app_factory, sample_media):
 def test_find_by_url_matches_twitter_status_id_across_url_shapes(app_factory, sample_media):
     service, db, *_ = app_factory()
     existing_url = "https://twitter.com/tokooo000/status/2054486821556621803"
-    db.create_submission(
+    existing_id = db.create_submission(
         user_id=1,
         username="admin",
         url=existing_url,
@@ -1065,6 +1091,7 @@ def test_find_by_url_matches_twitter_status_id_across_url_shapes(app_factory, sa
         metadata={"canonical_url": existing_url},
         now=service.clock.now(),
     )
+    db.update_message_id(existing_id, 321, service.clock.now())
 
     existing = db.find_by_url("https://twitter.com/i/status/2054486821556621803")
 
@@ -1095,7 +1122,7 @@ def test_find_by_url_matches_danbooru_post_with_query(app_factory, sample_media)
 async def test_bookmark_submit_detects_existing_twitter_status_id(app_factory, sample_media):
     service, db, bot, downloader = app_factory()
     existing_url = "https://twitter.com/akym_amia25/status/2054485704189829212"
-    db.create_submission(
+    existing_id = db.create_submission(
         user_id=1,
         username="admin",
         url=existing_url,
@@ -1104,6 +1131,7 @@ async def test_bookmark_submit_detects_existing_twitter_status_id(app_factory, s
         metadata={"canonical_url": existing_url},
         now=service.clock.now(),
     )
+    db.update_message_id(existing_id, 321, service.clock.now())
 
     status, submission_id = await service.submit_url_as_admin("https://twitter.com/i/status/2054485704189829212")
 

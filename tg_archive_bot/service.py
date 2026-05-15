@@ -923,8 +923,26 @@ class ArchiveBot:
         if not url:
             return SubmitResult(400, {"status": "error", "message": "缺少url参数"})
         normalized_url = normalize_url(url)
+        admin_id = self.config.admin_ids[0] if self.config.admin_ids else 0
         existing = self.db.find_by_url(normalized_url)
         if existing:
+            republished = await self.publish_existing_if_missing_channel_message(existing, admin_id)
+            if republished:
+                refreshed = self.db.get_submission(existing.id) or existing
+                metadata = submission_metadata(refreshed)
+                if existing.id not in self._moderation_notified_submission_ids:
+                    await self.notify_api_submission(existing.id, normalized_url, metadata)
+                return SubmitResult(
+                    200,
+                    {
+                        "status": "success",
+                        "message": "投稿成功并已发布到频道",
+                        "submission_id": existing.id,
+                        "url": normalized_url,
+                        "author": metadata.get("author_name", ""),
+                        "title": metadata.get("title", ""),
+                    },
+                )
             return api_duplicate_result(existing)
         if "pixiv.net" in normalized_url:
             count, _, _ = self.db.count_pixiv_downloads(self.config.pixiv_limit_hours)
@@ -948,7 +966,6 @@ class ArchiveBot:
             return api_duplicate_result(existing)
         safety_decision = await self.classify_downloaded_content(normalized_url, media_files, metadata)
         status = "pending" if safety_decision.rating == "uncertain" else "approved"
-        admin_id = self.config.admin_ids[0] if self.config.admin_ids else 0
         submission_id = self.db.create_submission(
             user_id=admin_id,
             username="api_submit",
@@ -988,18 +1005,28 @@ class ArchiveBot:
 
     async def submit_url_as_admin(self, url: str, username: str = "bookmark_monitor") -> tuple[str, int | None]:
         normalized_url = normalize_url(url)
+        admin_id = self.config.admin_ids[0] if self.config.admin_ids else 0
         existing = self.db.find_by_url(normalized_url)
         if existing:
+            if await self.publish_existing_if_missing_channel_message(existing, admin_id):
+                refreshed = self.db.get_submission(existing.id) or existing
+                if existing.id not in self._moderation_notified_submission_ids:
+                    await self.notify_api_submission(existing.id, normalized_url, submission_metadata(refreshed))
+                return "submitted", existing.id
             return "duplicate", existing.id
         media_files, metadata = await self.downloader.download_media(normalized_url)
         if not media_files:
             return "download_failed", None
         existing = self.find_existing_submission_from_metadata(normalized_url, metadata)
         if existing:
+            if await self.publish_existing_if_missing_channel_message(existing, admin_id):
+                refreshed = self.db.get_submission(existing.id) or existing
+                if existing.id not in self._moderation_notified_submission_ids:
+                    await self.notify_api_submission(existing.id, normalized_url, submission_metadata(refreshed))
+                return "submitted", existing.id
             return "duplicate", existing.id
         safety_decision = await self.classify_downloaded_content(normalized_url, media_files, metadata)
         status = "pending" if safety_decision.rating == "uncertain" else "approved"
-        admin_id = self.config.admin_ids[0] if self.config.admin_ids else 0
         submission_id = self.db.create_submission(
             user_id=admin_id,
             username=username,
@@ -1016,6 +1043,13 @@ class ArchiveBot:
         if submission_id not in self._moderation_notified_submission_ids:
             await self.notify_api_submission(submission_id, normalized_url, metadata)
         return "submitted", submission_id
+
+    async def publish_existing_if_missing_channel_message(self, submission: Submission, admin_id: int) -> bool:
+        if submission.status != "approved" or published_message_ids(submission):
+            return False
+        await self.publish_submission(submission.id, admin_id)
+        refreshed = self.db.get_submission(submission.id)
+        return bool(refreshed and published_message_ids(refreshed))
 
     async def notify_api_submission(self, submission_id: int, normalized_url: str, metadata: dict[str, Any]) -> None:
         submission = self.db.get_submission(submission_id)

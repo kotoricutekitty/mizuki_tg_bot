@@ -23,72 +23,150 @@ class TelegramBotClient:
         self.bot = bot
 
     async def send_message(self, chat_id: int | str, text: str, **kwargs: Any) -> Any:
-        return await self.bot.send_message(chat_id=chat_id, text=text, **convert_reply_markup(kwargs))
+        return await call_with_retry_after(
+            lambda: self.bot.send_message(chat_id=chat_id, text=text, **convert_reply_markup(kwargs))
+        )
 
     async def send_photo(self, chat_id: int | str, photo: Any, **kwargs: Any) -> Any:
-        return await self.bot.send_photo(chat_id=chat_id, photo=open_if_path(photo), **convert_reply_markup(kwargs))
+        async def operation() -> Any:
+            media = open_if_path(photo)
+            try:
+                return await self.bot.send_photo(chat_id=chat_id, photo=media, **convert_reply_markup(kwargs))
+            finally:
+                close_if_opened(photo, media)
+
+        return await call_with_retry_after(operation)
 
     async def send_video(self, chat_id: int | str, video: Any, **kwargs: Any) -> Any:
-        return await self.bot.send_video(chat_id=chat_id, video=open_if_path(video), **convert_reply_markup(kwargs))
+        async def operation() -> Any:
+            media = open_if_path(video)
+            try:
+                return await self.bot.send_video(chat_id=chat_id, video=media, **convert_reply_markup(kwargs))
+            finally:
+                close_if_opened(video, media)
+
+        return await call_with_retry_after(operation)
 
     async def send_document(self, chat_id: int | str, document: Any, **kwargs: Any) -> Any:
-        return await self.bot.send_document(chat_id=chat_id, document=open_if_path(document), **convert_reply_markup(kwargs))
+        async def operation() -> Any:
+            media = open_if_path(document)
+            try:
+                return await self.bot.send_document(chat_id=chat_id, document=media, **convert_reply_markup(kwargs))
+            finally:
+                close_if_opened(document, media)
+
+        return await call_with_retry_after(operation)
 
     async def send_media_group(self, chat_id: int | str, media: list[dict[str, Any]]) -> Any:
         from telegram import InputMediaDocument, InputMediaPhoto, InputMediaVideo
 
-        opened = []
-        tg_media = []
-        try:
-            for item in media:
-                fh = open_if_path(item["media"])
-                opened.append(fh)
-                kwargs = {"caption": item.get("caption") or None}
-                if item.get("parse_mode"):
-                    kwargs["parse_mode"] = item["parse_mode"]
-                if item["type"] == "photo":
-                    tg_media.append(InputMediaPhoto(fh, **kwargs))
-                elif item["type"] == "video":
-                    tg_media.append(InputMediaVideo(fh, **kwargs))
-                else:
-                    tg_media.append(InputMediaDocument(fh, **kwargs))
-            return await self.bot.send_media_group(
-                chat_id=chat_id,
-                media=tg_media,
-                read_timeout=120,
-                write_timeout=120,
-                connect_timeout=30,
-                pool_timeout=30,
-            )
-        finally:
-            for fh in opened:
-                if hasattr(fh, "close"):
-                    fh.close()
+        async def operation() -> Any:
+            opened = []
+            tg_media = []
+            try:
+                for item in media:
+                    source = item["media"]
+                    fh = open_if_path(source)
+                    if fh is not source:
+                        opened.append(fh)
+                    kwargs = {"caption": item.get("caption") or None}
+                    if item.get("parse_mode"):
+                        kwargs["parse_mode"] = item["parse_mode"]
+                    if item["type"] == "photo":
+                        tg_media.append(InputMediaPhoto(fh, **kwargs))
+                    elif item["type"] == "video":
+                        tg_media.append(InputMediaVideo(fh, **kwargs))
+                    else:
+                        tg_media.append(InputMediaDocument(fh, **kwargs))
+                return await self.bot.send_media_group(
+                    chat_id=chat_id,
+                    media=tg_media,
+                    read_timeout=120,
+                    write_timeout=120,
+                    connect_timeout=30,
+                    pool_timeout=30,
+                )
+            finally:
+                for fh in opened:
+                    if hasattr(fh, "close"):
+                        fh.close()
+
+        return await call_with_retry_after(operation)
 
     async def delete_message(self, chat_id: int | str, message_id: int) -> Any:
-        return await self.bot.delete_message(chat_id=chat_id, message_id=message_id)
+        return await call_with_retry_after(lambda: self.bot.delete_message(chat_id=chat_id, message_id=message_id))
 
     async def edit_message_text(self, chat_id: int | str, message_id: int, text: str, **kwargs: Any) -> Any:
-        return await self.bot.edit_message_text(
-            chat_id=chat_id,
-            message_id=message_id,
-            text=text,
-            **convert_reply_markup(kwargs),
-        )
+        try:
+            return await call_with_retry_after(
+                lambda: self.bot.edit_message_text(
+                    chat_id=chat_id,
+                    message_id=message_id,
+                    text=text,
+                    **convert_reply_markup(kwargs),
+                )
+            )
+        except Exception as exc:
+            if is_message_not_modified(exc):
+                logging.info("Telegram edit_message_text skipped because message is not modified")
+                return None
+            raise
 
     async def edit_message_caption(self, chat_id: int | str, message_id: int, caption: str, **kwargs: Any) -> Any:
-        return await self.bot.edit_message_caption(
-            chat_id=chat_id,
-            message_id=message_id,
-            caption=caption,
-            **convert_reply_markup(kwargs),
-        )
+        try:
+            return await call_with_retry_after(
+                lambda: self.bot.edit_message_caption(
+                    chat_id=chat_id,
+                    message_id=message_id,
+                    caption=caption,
+                    **convert_reply_markup(kwargs),
+                )
+            )
+        except Exception as exc:
+            if is_message_not_modified(exc):
+                logging.info("Telegram edit_message_caption skipped because message is not modified")
+                return None
+            raise
+
+
+async def call_with_retry_after(operation, *, max_attempts: int = 3) -> Any:
+    for attempt in range(max_attempts):
+        try:
+            return await operation()
+        except Exception as exc:
+            retry_after = telegram_retry_after_seconds(exc)
+            if retry_after is None or attempt >= max_attempts - 1:
+                raise
+            logging.warning("Telegram flood control hit; retrying after %ss", retry_after)
+            await asyncio.sleep(retry_after + 1)
+    raise RuntimeError("unreachable")
+
+
+def telegram_retry_after_seconds(exc: Exception) -> int | None:
+    retry_after = getattr(exc, "retry_after", None)
+    if retry_after is None:
+        return None
+    try:
+        return max(0, int(retry_after))
+    except (TypeError, ValueError):
+        return None
+
+
+def is_message_not_modified(exc: Exception) -> bool:
+    return "message is not modified" in str(exc).lower()
 
 
 def open_if_path(value: Any) -> Any:
     if isinstance(value, (str, Path)) and Path(value).exists():
         return open(value, "rb")
     return value
+
+
+def close_if_opened(source: Any, value: Any) -> None:
+    if value is source:
+        return
+    if hasattr(value, "close"):
+        value.close()
 
 
 def convert_reply_markup(kwargs: dict[str, Any]) -> dict[str, Any]:

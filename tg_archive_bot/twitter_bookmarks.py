@@ -358,6 +358,17 @@ class TwitterBookmarkMonitor:
                 logging.exception("Failed to submit %s bookmark %s: %s", self.label, item.tweet_id, exc)
                 if is_retryable_submit_error(exc):
                     self.db.mark_bookmark_retryable_error(item.tweet_id, str(exc), now, provider=self.provider)
+                    retry_after = retry_after_seconds(exc)
+                    if retry_after is not None:
+                        logging.warning(
+                            "%s bookmark submit hit Telegram flood control; retry_after=%ss bookmark_id=%s",
+                            self.label,
+                            retry_after,
+                            item.tweet_id,
+                        )
+                        self.last_activity_at = now
+                        await asyncio.sleep(retry_after + 1)
+                        continue
                 else:
                     self.db.mark_bookmark_failed(item.tweet_id, str(exc), now, provider=self.provider)
                 self.last_activity_at = now
@@ -399,6 +410,16 @@ def is_retryable_submit_error(exc: Exception) -> bool:
     if module.startswith("telegram.") and name in {"TimedOut", "NetworkError", "RetryAfter"}:
         return True
     return "timed out" in text or "timeout" in text
+
+
+def retry_after_seconds(exc: Exception) -> int | None:
+    retry_after = getattr(exc, "retry_after", None)
+    if retry_after is None:
+        return None
+    try:
+        return max(0, int(retry_after))
+    except (TypeError, ValueError):
+        return None
 
 
 def parse_x_bookmarks_http_error(exc: urllib.error.HTTPError) -> XBookmarksAPIError:
