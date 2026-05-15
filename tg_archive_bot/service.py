@@ -628,12 +628,7 @@ class ArchiveBot:
         self.db.update_status(submission_id, "approved", reviewer_id, self.clock.now())
         target_channel = self.publish_channel_for_submission(submission)
         metadata = submission_metadata(submission)
-        caption = messages.publish_caption(
-            submission.url,
-            author_name=metadata.get("author_name") or submission.author_name,
-            text=metadata.get("text") or submission.text,
-            canonical_url=metadata.get("canonical_url") or submission.canonical_url,
-        )
+        caption = publish_caption_for_submission(submission, metadata)
         channel_message_id: int | None = None
         channel_message_ids: list[int] = []
         media_files = published_media_paths(submission)
@@ -755,12 +750,7 @@ class ArchiveBot:
     async def edit_published_caption(self, submission: Submission) -> None:
         channel = str(submission_metadata(submission).get("channel_id") or self.publish_channel_for_submission(submission))
         metadata = submission_metadata(submission)
-        caption = messages.publish_caption(
-            submission.url,
-            author_name=metadata.get("author_name") or submission.author_name,
-            text=metadata.get("text") or submission.text,
-            canonical_url=metadata.get("canonical_url") or submission.canonical_url,
-        )
+        caption = publish_caption_for_submission(submission, metadata)
         for message_id in caption_message_ids(submission):
             await self.bot.edit_message_caption(
                 chat_id=channel,
@@ -1599,6 +1589,31 @@ def submission_metadata(submission: Submission) -> dict[str, Any]:
     metadata.setdefault("title", submission.title or "")
     metadata.setdefault("text", submission.text or "")
     return metadata
+
+
+def publish_caption_for_submission(submission: Submission, metadata: dict[str, Any]) -> str:
+    canonical_url = metadata.get("canonical_url") or submission.canonical_url
+    author_name = metadata.get("author_name") or submission.author_name
+    if is_pixiv_submission(submission, metadata):
+        return messages.publish_author_only_caption(
+            submission.url,
+            author_name=author_name,
+            canonical_url=canonical_url,
+        )
+    return messages.publish_caption(
+        submission.url,
+        author_name=author_name,
+        text=metadata.get("text") or submission.text,
+        canonical_url=canonical_url,
+    )
+
+
+def is_pixiv_submission(submission: Submission, metadata: dict[str, Any]) -> bool:
+    provider = str(submission.provider or metadata.get("provider") or "").lower()
+    if provider == "pixiv":
+        return True
+    url = f"{submission.url} {submission.canonical_url or ''} {metadata.get('canonical_url') or ''}".lower()
+    return "pixiv.net" in url
 
 
 def published_message_ids(submission: Submission) -> list[int]:

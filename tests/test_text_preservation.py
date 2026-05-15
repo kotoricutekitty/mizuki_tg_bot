@@ -67,3 +67,11 @@ def test_publish_caption_strips_html_breaks():
         text="Twitterに投稿したもののまとめ<br />(えなみずっぽいものもある)",
         canonical_url="https://www.pixiv.net/artworks/129104622",
     ) == "<b>反町豆腐</b>: 「Twitterに投稿したもののまとめ (えなみずっぽいものもある)」\nhttps://www.pixiv.net/artworks/129104622"
+
+
+def test_pixiv_author_only_caption():
+    assert messages.publish_author_only_caption(
+        "https://www.pixiv.net/artworks/129104622",
+        author_name="反町豆腐",
+        canonical_url="https://www.pixiv.net/artworks/129104622",
+    ) == "<b>反町豆腐</b>\nhttps://www.pixiv.net/artworks/129104622"

@@ -283,6 +283,17 @@ def publish_caption(
     return caption
 
 
+def publish_author_only_caption(
+    url: str,
+    *,
+    author_name: str | None = None,
+    canonical_url: str | None = None,
+) -> str:
+    caption = f"<b>{escape(author_name)}</b>\n" if author_name else ""
+    caption += escape(canonical_url or url)
+    return caption
+
+
 def clean_caption_text(text: str) -> str:
     cleaned = unescape(text)
     cleaned = re.sub(r"<br\s*/?>", " ", cleaned, flags=re.IGNORECASE)

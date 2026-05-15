@@ -62,6 +62,22 @@ async def test_admin_submit_auto_publish(app_factory, sample_media):
 
 
 @pytest.mark.asyncio
+async def test_pixiv_channel_caption_uses_author_only(app_factory, sample_media):
+    url = "https://www.pixiv.net/artworks/129104622"
+    metadata = {"author_name": "反町豆腐", "text": "long body", "canonical_url": url}
+    service, db, bot, _ = app_factory({url: ([sample_media["jpg"]], metadata)})
+    message = FakeMessage(text=url)
+
+    await service.handle_message(FakeUpdate(FakeUser(1, "admin"), message=message))
+
+    assert db.get_submission(1).status == "approved"
+    assert bot.calls[0]["method"] == "send_photo"
+    assert bot.calls[0]["chat_id"] == "@archive"
+    assert bot.calls[0]["caption"] == "<b>反町豆腐</b>\nhttps://www.pixiv.net/artworks/129104622"
+    assert "long body" not in bot.calls[0]["caption"]
+
+
+@pytest.mark.asyncio
 async def test_batch_links_with_duplicate(app_factory, sample_media):
     existing_url = "https://twitter.com/user/status/1"
     new_url = "https://twitter.com/user/status/2"
@@ -806,9 +822,9 @@ async def test_publish_media_variants(app_factory, tmp_path):
     assert [item["media"] for item in groups[0]["media"]] == jpgs[:5]
     assert [item["media"] for item in groups[1]["media"]] == jpgs[5:10]
     assert [item["media"] for item in groups[2]["media"]] == jpgs[10:]
-    assert groups[0]["media"][0]["caption"] == "\nhttps://pixiv.net/artworks/999"
+    assert groups[0]["media"][0]["caption"] == "https://pixiv.net/artworks/999"
     assert groups[0]["media"][0]["parse_mode"] == "HTML"
-    assert groups[1]["media"][0]["caption"] == "\nhttps://pixiv.net/artworks/999"
+    assert groups[1]["media"][0]["caption"] == "https://pixiv.net/artworks/999"
     assert groups[1]["media"][0]["parse_mode"] == "HTML"
     submission = db.get_submission(sub_id)
     metadata = json.loads(submission.metadata_json)
